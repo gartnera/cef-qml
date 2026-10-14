@@ -21,7 +21,10 @@ import CefQml
 // (popup(item, x, y), e.g. a RecentlyClosedMenu) and session.restore a
 // `sessionStore` (a SessionStore with a saved session), palette.show a
 // `commandPalette` (a CommandPalette: toggle(prefix), visible) and the
-// hints.* actions but hints.focusInput a `linkHints` (a LinkHints). The
+// hints.* actions but hints.focusInput a `linkHints` (a LinkHints).
+// site.info needs a `siteInfo` (a SiteInfo, e.g. NavigationBar.siteInfo)
+// and site.settings a `siteSettingsManager` (toggle(), visible); neither
+// has a default key. The
 // page.scroll* actions have no default keys (window-wide letters or arrows
 // would take them from pages; see the README's modal example). Declare more
 // BrowserActions inside, or replace one
@@ -44,6 +47,8 @@ ActionRegistry {
     property var sessionStore: null
     property var commandPalette: null
     property var linkHints: null
+    property var siteInfo: null
+    property var siteSettingsManager: null
 
     readonly property CefWebView view: controller ? controller.currentView : null
     readonly property bool hasView: view !== null
@@ -373,6 +378,22 @@ ActionRegistry {
         checked: acts.bookmarkManager !== null && acts.bookmarkManager.visible
         enabled: acts.bookmarkManager !== null
         onTriggered: acts.bookmarkManager.toggle()
+    }
+
+    // site.*
+    BrowserAction {
+        name: "site.info"; text: "Site information"
+        description: "Show or hide the current site's connection, permissions and zoom."
+        checked: acts.siteInfo !== null && acts.siteInfo.visible
+        enabled: acts.hasView && acts.siteInfo !== null
+        onTriggered: acts.siteInfo.toggle()
+    }
+    BrowserAction {
+        name: "site.settings"; text: "Site settings"
+        description: "Show or hide the settings stored for all sites."
+        checked: acts.siteSettingsManager !== null && acts.siteSettingsManager.visible
+        enabled: acts.siteSettingsManager !== null
+        onTriggered: acts.siteSettingsManager.toggle()
     }
 
     // palette.*

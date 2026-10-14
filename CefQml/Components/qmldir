@@ -27,6 +27,8 @@ BookmarksBar 1.0 BookmarksBar.qml
 BookmarkMenu 1.0 BookmarkMenu.qml
 BookmarkEditor 1.0 BookmarkEditor.qml
 BookmarkManager 1.0 BookmarkManager.qml
+SiteInfo 1.0 SiteInfo.qml
+SiteSettingsManager 1.0 SiteSettingsManager.qml
 SessionStore 1.0 SessionStore.qml
 RecentlyClosedMenu 1.0 RecentlyClosedMenu.qml
 internal PopupMenu PopupMenu.qml

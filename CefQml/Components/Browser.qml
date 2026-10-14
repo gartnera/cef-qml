@@ -109,6 +109,15 @@ FocusScope {
     // Keyboard link hints over the current tab (LinkHints; actions
     // "hints.open": Alt+F, "hints.newTab": Alt+Shift+F, "hints.copyLink").
     property alias linkHints: hintsOverlay
+    // Per-site settings (SiteSettings, Cef.dataDir/site-settings.json):
+    // remembered permission decisions, per-site zoom, JavaScript, images and
+    // pop-ups. The site info card (navigationBar.siteInfo, action
+    // "site.info") and the site settings overlay (SiteSettingsManager,
+    // action "site.settings") edit it. Set to null to disable per-site
+    // settings; share one store between several Browser windows.
+    property SiteSettings siteSettings: SiteSettings { }
+    property alias siteSettingsManager: ssManager
+    readonly property bool siteSettingsVisible: siteSettingsOverlay.visible
 
     signal lastTabClosed()
 
@@ -141,6 +150,10 @@ FocusScope {
     function hideBookmarks() { bookmarkOverlay.close() }
     // Opens the command palette with `prefix` typed (">" commands, "@" tabs,
     // "*" bookmarks, "#" history; default: everything).
+    function showSiteInfo() { return navBar.siteInfo.open() }
+    function hideSiteInfo() { navBar.siteInfo.close() }
+    function showSiteSettings() { siteSettingsOverlay.open() }
+    function hideSiteSettings() { siteSettingsOverlay.close() }
     function showCommandPalette(prefix) { return cmdPalette.open(prefix) }
     function hideCommandPalette() { cmdPalette.close() }
     // Opens a bookmark (or any URL) as the bookmark components do: here, or
@@ -259,6 +272,10 @@ FocusScope {
         searchUrl: browser.searchUrl
         keyBindings: keys
         bookmarkStore: browser.bookmarkStore
+        siteSettings: browser.siteSettings
+        siteInfo.storeZoom: webTabs.zoomPolicy === "origin"
+        siteInfo.showManageLink: browser.siteSettings !== null
+        siteInfo.onManageRequested: siteSettingsOverlay.open()
         addressField.isInternalUrl: u => browser.isNewTabUrl(u)
     }
 
@@ -298,6 +315,7 @@ FocusScope {
             homeUrl: browser.homeUrl
             userScriptStore: browser.userScriptStore
             historyStore: browser.historyStore
+            siteSettings: browser.siteSettings
             onLastTabClosed: browser.keepOneTab ? browser.newTab() : browser.lastTabClosed()
             onCurrentViewChanged: if (currentView && browser.activeFocus && !navBar.addressField.input.activeFocus)
                                       currentView.forceActiveFocus()
@@ -328,7 +346,7 @@ FocusScope {
             anchors.fill: parent
             available: browser.userScriptStore !== null
             returnFocusTo: webTabs.currentView
-            onOpened: { historyOverlay.close(); bookmarkOverlay.close() }
+            onOpened: { historyOverlay.close(); bookmarkOverlay.close(); siteSettingsOverlay.close() }
             UserScriptManager {
                 id: usManager
                 objectName: "userScriptManager"
@@ -346,7 +364,7 @@ FocusScope {
             panelWidth: 760
             available: browser.historyStore !== null
             returnFocusTo: webTabs.currentView
-            onOpened: { userScriptOverlay.close(); bookmarkOverlay.close() }
+            onOpened: { userScriptOverlay.close(); bookmarkOverlay.close(); siteSettingsOverlay.close() }
             HistoryView {
                 id: historyPanel
                 objectName: "historyView"
@@ -372,7 +390,7 @@ FocusScope {
             panelWidth: 860
             available: browser.bookmarkStore !== null
             returnFocusTo: webTabs.currentView
-            onOpened: { userScriptOverlay.close(); historyOverlay.close() }
+            onOpened: { userScriptOverlay.close(); historyOverlay.close(); siteSettingsOverlay.close() }
             BookmarkManager {
                 id: bmManager
                 objectName: "bookmarkManager"
@@ -384,6 +402,23 @@ FocusScope {
                     browser.openBookmark(url, newTab)
                 }
                 onCloseRequested: bookmarkOverlay.close()
+            }
+        }
+
+        PanelOverlay {
+            id: siteSettingsOverlay
+            objectName: "siteSettingsOverlay"
+            anchors.fill: parent
+            panelWidth: 760
+            available: browser.siteSettings !== null
+            returnFocusTo: webTabs.currentView
+            onOpened: { userScriptOverlay.close(); historyOverlay.close(); bookmarkOverlay.close() }
+            SiteSettingsManager {
+                id: ssManager
+                objectName: "siteSettingsManager"
+                anchors.fill: parent
+                store: browser.siteSettings
+                onCloseRequested: siteSettingsOverlay.close()
             }
         }
     }
@@ -479,6 +514,8 @@ FocusScope {
         sessionStore: browser.sessionStore
         commandPalette: cmdPalette
         linkHints: hintsOverlay
+        siteInfo: navBar.siteInfo
+        siteSettingsManager: browser.siteSettings ? siteSettingsOverlay : null
     }
 
     // Install prompt for *.user.js pages loaded in the current tab.

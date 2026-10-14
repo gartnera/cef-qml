@@ -14,6 +14,14 @@ Rectangle {
     // address field.
     property BookmarkStore bookmarkStore: null
     property alias bookmarkButton: star
+    // Optional SiteSettings: the site info card (siteInfo, opened by the
+    // button left of the address field) then lists and changes the page's
+    // permissions, content settings and zoom. Without one it still shows
+    // the connection security and "Clear cookies and site data".
+    property SiteSettings siteSettings: null
+    property bool showSiteInfo: true
+    property alias siteInfo: siteInfoCard
+    property alias siteInfoButton: siteButton
     // Extra items placed after the address field (e.g. a menu button).
     default property alias trailing: trailingRow.data
 
@@ -54,11 +62,47 @@ Rectangle {
         }
     }
 
+    IconButton {
+        id: siteButton
+        objectName: "siteInfoButton"
+        anchors.left: leading.right
+        anchors.leftMargin: 6
+        anchors.verticalCenter: parent.verticalCenter
+        visible: bar.showSiteInfo && bar.view !== null
+        width: visible ? implicitWidth : 0
+        checked: siteInfoCard.opened
+        toolTip: bar._tip("Site information", "site.info")
+        onClicked: siteInfoCard.toggle(siteButton)
+        Rectangle {
+            anchors.centerIn: parent
+            width: 16; height: 16; radius: 8
+            color: "transparent"
+            border.width: 1.5
+            border.color: siteInfoCard.security === "secure" ? Style.accent
+                        : siteInfoCard.security === "certificate-error" ? Style.danger : Style.textDim
+            Text {
+                anchors.centerIn: parent
+                text: siteInfoCard.security === "certificate-error" ? "!" : "i"
+                color: parent.border.color
+                font.pixelSize: 11
+                font.bold: true
+                font.family: Style.fontFamily
+            }
+        }
+    }
+
+    SiteInfo {
+        id: siteInfoCard
+        view: bar.view
+        store: bar.siteSettings
+        anchorItem: siteButton
+    }
+
     AddressField {
         id: address
         view: bar.view
-        anchors.left: leading.right
-        anchors.leftMargin: 6
+        anchors.left: siteButton.right
+        anchors.leftMargin: siteButton.visible ? 2 : 0
         anchors.right: star.left
         anchors.rightMargin: 6
         anchors.verticalCenter: parent.verticalCenter
