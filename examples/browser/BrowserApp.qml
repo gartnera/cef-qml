@@ -14,6 +14,23 @@ Item {
         anchors.fill: parent
         focus: true
         openInitialTabs: false
+
+        // Key bindings: { actionName: [keys] } replaces an action's default
+        // keys; [] unbinds it (see "Actions, key bindings and scripting" in
+        // the README; browser.actions.names() lists the actions).
+        // bindings: ({
+        //     "tab.new": ["Ctrl+T", "Ctrl+N"],
+        //     "zoom.reset": [],
+        //     "app.copyTitle": ["Ctrl+Shift+C"],
+        // })
+
+        // An action of your own; give it keys here or in `bindings`.
+        // BrowserAction {
+        //     registry: browser.actions
+        //     name: "app.copyTitle"; text: "Copy page title"
+        //     defaultShortcuts: ["Ctrl+Shift+C"]
+        //     onTriggered: Cef.copyToClipboard(browser.title)
+        // }
     }
 
     // Under HotReload (dev.qml), keep the open tabs across reloads.

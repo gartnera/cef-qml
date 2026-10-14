@@ -377,20 +377,20 @@ void CefQmlClient::OnLoadingStateChange(CefRefPtr<CefBrowser>, bool isLoading,
 void CefQmlClient::OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
                                TransitionType) {
   if (m_view && frame->IsMain())
-    m_view->cefLoadStart();
+    m_view->cefLoadStart(QUrl(qstr(frame->GetURL())));
 }
 
 void CefQmlClient::OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
                              int httpStatusCode) {
   if (m_view && frame->IsMain())
-    Q_EMIT m_view->loadFinished(QUrl(qstr(frame->GetURL())), httpStatusCode);
+    m_view->cefLoadEnd(QUrl(qstr(frame->GetURL())), httpStatusCode);
 }
 
 void CefQmlClient::OnLoadError(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
                                ErrorCode errorCode, const CefString& errorText,
                                const CefString& failedUrl) {
   if (m_view && frame->IsMain() && errorCode != ERR_ABORTED)
-    Q_EMIT m_view->loadFailed(int(errorCode), qstr(errorText), QUrl(qstr(failedUrl)));
+    m_view->cefLoadError(int(errorCode), qstr(errorText), QUrl(qstr(failedUrl)));
 }
 
 // ---- CefRenderHandler ------------------------------------------------------

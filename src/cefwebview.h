@@ -138,6 +138,10 @@ class CefWebView : public QQuickItem {
   // A page asked for a new window/tab (target=_blank, window.open, middle
   // click, ...). If nothing is connected, the URL is opened in this view.
   void newWindowRequested(const QUrl& url, bool userGesture, bool background);
+  // Main-frame load events. loadStarted: a new document committed (not for
+  // same-document navigations). None are emitted for the internal
+  // about:blank bootstrap page.
+  void loadStarted(const QUrl& url);
   void loadFailed(int errorCode, const QString& errorText, const QUrl& failedUrl);
   void loadFinished(const QUrl& url, int httpStatusCode);
   void consoleMessage(int level, const QString& message, const QString& source, int line);
@@ -191,6 +195,8 @@ class CefWebView : public QQuickItem {
   QPoint toBrowser(QPointF pos) const;
   qreal devicePixelRatio() const;
   void loadInBrowser(const QUrl& url);
+  bool isBootstrapLoad(const QUrl& url) const;
+  void resetInitialHistory();
 
   // Called by CefQmlClient (always on the GUI thread).
   void cefAfterCreated();
@@ -200,7 +206,9 @@ class CefWebView : public QQuickItem {
   void cefPopupShow(bool show);
   void cefPopupSize(const QRect& rect);
   void cefAddressChange(const QUrl& url);
-  void cefLoadStart();
+  void cefLoadStart(const QUrl& url);
+  void cefLoadEnd(const QUrl& url, int httpStatusCode);
+  void cefLoadError(int errorCode, const QString& errorText, const QUrl& failedUrl);
   void cefTitleChange(const QString& title);
   void cefIconChange(const QUrl& icon);
   void cefLoadingStateChange(bool loading, bool canGoBack, bool canGoForward);

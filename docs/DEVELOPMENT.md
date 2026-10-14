@@ -155,6 +155,21 @@ signal kills the process the default way.
   stale layout.
 - QML: a `Loader` property named `item` shadows `Loader.item`; ambiguous
   `Shortcut` sequences (the same keys bound twice) never fire.
+  Disabled `Shortcut`s still count: with a disabled and an enabled one on the
+  same keys, Qt may send the (ambiguous) event to the disabled one and nothing
+  fires. `Instantiator` (through the delegate model) deletes removed delegates
+  with `deleteLater`, so their `Shortcut`s stay registered for a while (in
+  `qmltestrunner`, until the test function returns). `KeyBindings` therefore
+  clears a delegate's `sequence` when it is removed or inactive.
+  `QT_LOGGING_RULES=qt.gui.shortcutmap=true` shows what the shortcut map does.
+- V4 keeps the original position of an object key that is deleted and added
+  again; build a new object to move a key to the end (`KeyBindings.bind`
+  relies on key order).
+- `url.toString()` in QML decodes `%20` and the like; keep `url` values
+  (not their text) when the URL is loaded again, or it is typed text.
+- `CefWebView.loadStarted` exists so that waiting for a load
+  (`BrowserController.whenLoaded`) does not take the previous page's
+  `loadFinished`; `loadFinished` alone cannot tell the two apart.
 - XMLHttpRequest file writes in tests are asynchronous; wait for `DONE`.
 - `pkill -f <pattern>` can match (and kill) your own shell; prefer pids.
 - C string hex escapes are greedy: write `"\x01" "cefqml:..."`, not

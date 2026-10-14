@@ -9,6 +9,8 @@ Item {
     property url linkUrl
     property string selectedText
     property bool editable: false
+    // Optional KeyBindings: entries show the keys of their action.
+    property var keyBindings: null
     signal openLinkInNewTab(url url)
 
     visible: false
@@ -36,6 +38,7 @@ Item {
         panel.y = Math.min(p.y, height - panel.height - 4)
     }
     function close() { visible = false }
+    function _hint(action) { return keyBindings ? keyBindings.hint(action) : "" }
 
     readonly property var items: {
         const list = []
@@ -57,9 +60,9 @@ Item {
             list.push({ label: "Copy", action: () => view.copy() })
         }
         if (!hasLink && !editable && selectedText === "") {
-            list.push({ label: "Back", enabled: view && view.canGoBack, action: () => view.goBack() })
-            list.push({ label: "Forward", enabled: view && view.canGoForward, action: () => view.goForward() })
-            list.push({ label: "Reload", action: () => view.reload() })
+            list.push({ label: "Back", hint: _hint("nav.back"), enabled: view && view.canGoBack, action: () => view.goBack() })
+            list.push({ label: "Forward", hint: _hint("nav.forward"), enabled: view && view.canGoForward, action: () => view.goForward() })
+            list.push({ label: "Reload", hint: _hint("nav.reload"), action: () => view.reload() })
         }
         return list
     }
@@ -113,6 +116,15 @@ Item {
                 text: parent.parent.entryData.label
                 color: parent.itemEnabled ? Style.text : Style.textDim
                 font.pixelSize: Style.fontSize
+                font.family: Style.fontFamily
+            }
+            Text {
+                anchors.right: parent.right
+                anchors.rightMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                text: parent.parent.entryData.hint || ""
+                color: Style.textDim
+                font.pixelSize: Style.fontSize - 1
                 font.family: Style.fontFamily
             }
             MouseArea {

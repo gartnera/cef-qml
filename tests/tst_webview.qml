@@ -49,6 +49,11 @@ Item {
         }
     }
 
+    Component {
+        id: plainView
+        CefWebView { width: 100; height: 100 }
+    }
+
     // Answers JavaScript dialogs according to `dialogAnswer` while enabled.
     property bool handleDialogs: false
     property var dialogAnswer: null
@@ -358,6 +363,27 @@ Item {
             wait(1500)  // let CEF create and close them
             const v = createTemporaryObject(scriptedView, root)
             tryCompare(v, "title", "injected:yes", 15000)
+        }
+
+        function test_23_load_events() {
+            // A fresh view: its about:blank bootstrap page stays internal.
+            const first = "data:text/html,%3Ctitle%3Efirst%3C/title%3E"
+            const v = createTemporaryObject(plainView, root, { url: first })
+            const events = []
+            v.loadStarted.connect(u => events.push("start " + u))
+            v.loadFinished.connect((u, status) => events.push("finish " + u))
+            v.loadFailed.connect((code, text, u) => events.push("fail " + code + " " + u))
+            tryCompare(v, "title", "first", 10000)
+            tryVerify(() => events.length >= 2, 5000)
+            compare(events.slice(0, 2), ["start " + first, "finish " + first], JSON.stringify(events))
+            verify(!events.some(e => e.indexOf("about:blank") >= 0), JSON.stringify(events))
+            events.length = 0
+            v.url = "http://127.0.0.1:1/"
+            tryVerify(() => events.some(e => e.startsWith("fail ")), 15000, JSON.stringify(events))
+            // ERR_UNSAFE_PORT (-312): blocked before any connection attempt.
+            verify(events.some(e => /^fail -\d+ http:\/\/127.0.0.1:1\/$/.test(e)), JSON.stringify(events))
+            // (The error page then reports loadFinished for the failed URL.)
+            verify(events.filter(e => !e.startsWith("start "))[0].startsWith("fail "), JSON.stringify(events))
         }
 
         function test_21_clipboard_bridge() {

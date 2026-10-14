@@ -6,6 +6,14 @@ import CefQml
 // is, or copy it as a starting point for your own layout.
 //
 //   Browser { anchors.fill: parent; initialUrls: ["https://example.com"] }
+//
+// Keyboard shortcuts come from `actions` (BrowserActions) through
+// `keyBindings` (KeyBindings); `bindings` overrides them:
+//
+//   Browser { bindings: ({ "tab.new": ["Ctrl+T", "Ctrl+N"], "nav.back": [] }) }
+//
+// Scripting: navigate(), openTab(), selectTab(), trigger("tab.next"), ...
+// forward to `controller` (BrowserController).
 FocusScope {
     id: browser
 
@@ -23,14 +31,36 @@ FocusScope {
     property alias navigationBar: navBar
     property alias findBar: findBar
 
+    // Programmatic API, actions and key bindings.
+    property alias controller: ctl
+    property alias actions: acts
+    property alias keyBindings: keys
+    // User key bindings, { actionName: [sequences] } (see KeyBindings).
+    property alias bindings: keys.bindings
+
     signal lastTabClosed()
 
+    // ---- scripting (see BrowserController for the details) ----------------
+
+    // Loads `target` (url or typed text); returns a Promise of the load
+    // result. opts: { newTab, background, index, tab, timeout }.
+    function navigate(target, opts, callback) { return ctl.navigate(target, opts, callback) }
+    // Opens a tab and returns its view. opts: { background, index }.
+    function openTab(url, opts, callback) { return ctl.openTab(url, opts, callback) }
+    function closeTab(tab) { return ctl.closeTab(tab) }
+    function selectTab(tab) { return ctl.selectTab(tab) }
+    function back(tab) { return ctl.back(tab) }
+    function forward(tab) { return ctl.forward(tab) }
+    function reload(tab, ignoreCache) { return ctl.reload(tab, ignoreCache) }
+    function stop(tab) { return ctl.stop(tab) }
+    function findTab(predicate) { return ctl.findTab(predicate) }
+    function tabForUrl(url) { return ctl.tabForUrl(url) }
+    function whenLoaded(view, callback, opts) { return ctl.whenLoaded(view, callback, opts) }
+    // Runs the action `name` (e.g. "tab.next", "tab.select" with { index: 2 }).
+    function trigger(name, args) { return acts.trigger(name, args) }
+
     // Opens `url` (typed text is turned into a URL or a search).
-    function open(url, newTab) {
-        const target = typeof url === "string" ? navBar.addressField.urlFor(url) : url
-        if (newTab || !currentView) webTabs.openTab(target)
-        else currentView.url = target
-    }
+    function open(url, newTab) { return ctl.navigate(url, { newTab: !!newTab }) }
     // True for the built-in new-tab page (Chromium re-encodes data: URLs, so
     // match on a marker instead of the exact string).
     function isNewTabUrl(u) {
@@ -38,10 +68,8 @@ FocusScope {
         if (!u.startsWith("data:")) return false
         try { return decodeURIComponent(u).indexOf("cefqml-newtab") >= 0 } catch (e) { return u.indexOf("cefqml-newtab") >= 0 }
     }
-    function newTab() {
-        webTabs.openTab(homeUrl)
-        navBar.addressField.focusAndSelect()
-    }
+    // A home-page tab with the address field focused (the "tab.new" action).
+    function newTab() { acts.trigger("tab.new") }
 
     readonly property string newTabUrl: "data:text/html;charset=utf-8," + encodeURIComponent(newTabHtml)
     property string newTabHtml: `<!doctype html><html><head><title>New Tab</title><meta charset="utf-8"><meta name="cefqml-newtab">
@@ -100,6 +128,7 @@ FocusScope {
         anchors.right: parent.right
         view: webTabs.currentView
         searchUrl: browser.searchUrl
+        keyBindings: keys
         addressField.isInternalUrl: u => browser.isNewTabUrl(u)
     }
 
@@ -153,7 +182,8 @@ FocusScope {
     ContextMenu {
         anchors.fill: parent
         tabs: webTabs
-        onOpenLinkInNewTab: url => webTabs.openTab(url, true, webTabs.currentIndex + 1)
+        keyBindings: keys
+        onOpenLinkInNewTab: url => ctl.openTab(url, { background: true, index: webTabs.currentIndex + 1 })
     }
 
     Loader {
@@ -168,29 +198,24 @@ FocusScope {
         else webTabs.openTab(homeUrl)
     }
 
-    // Keyboard shortcuts (window-wide, so they work while a page has focus).
-    // Note: listing the same keys twice (e.g. StandardKey.AddTab and "Ctrl+T")
-    // makes a Shortcut ambiguous and it never fires.
-    component Key: Shortcut { context: Qt.WindowShortcut; enabled: browser.enabled && browser.visible }
-    Key { sequences: ["Ctrl+T"]; onActivated: browser.newTab() }
-    Key { sequences: ["Ctrl+W", "Ctrl+F4"]; onActivated: webTabs.closeTab() }
-    Key { sequences: ["Ctrl+L", "F6", "Alt+D"]; onActivated: navBar.addressField.focusAndSelect() }
-    Key { sequences: ["Ctrl+Tab", "Ctrl+PgDown"]; onActivated: webTabs.currentIndex = (webTabs.currentIndex + 1) % webTabs.count }
-    Key { sequences: ["Ctrl+Shift+Tab", "Ctrl+PgUp"]; onActivated: webTabs.currentIndex = (webTabs.currentIndex + webTabs.count - 1) % webTabs.count }
-    Key { sequences: ["Ctrl+R", "F5"]; onActivated: if (browser.currentView) browser.currentView.reload() }
-    Key { sequences: ["Ctrl+Shift+R", "Shift+F5"]; onActivated: if (browser.currentView) browser.currentView.reloadIgnoringCache() }
-    Key { sequences: ["Alt+Left"]; onActivated: if (browser.currentView) browser.currentView.goBack() }
-    Key { sequences: ["Alt+Right"]; onActivated: if (browser.currentView) browser.currentView.goForward() }
-    Key { sequences: ["Ctrl+F", "F3"]; onActivated: findBar.open() }
-    Key { sequences: ["Ctrl+=", "Ctrl++"]; onActivated: if (browser.currentView) browser.currentView.zoomFactor += 0.1 }
-    Key { sequences: ["Ctrl+-"]; onActivated: if (browser.currentView) browser.currentView.zoomFactor -= 0.1 }
-    Key { sequences: ["Ctrl+0"]; onActivated: if (browser.currentView) browser.currentView.zoomFactor = 1 }
-    Instantiator {
-        model: 9
-        delegate: Key {
-            required property int index
-            sequences: ["Ctrl+" + (index + 1)]
-            onActivated: webTabs.currentIndex = index === 8 ? webTabs.count - 1 : Math.min(index, webTabs.count - 1)
-        }
+    BrowserController {
+        id: ctl
+        tabs: webTabs
+        searchUrl: browser.searchUrl
+        isInternalUrl: u => browser.isNewTabUrl(u)
+    }
+
+    BrowserActions {
+        id: acts
+        controller: ctl
+        addressField: navBar.addressField
+        findBar: findBar
+        window: browser.Window.window
+    }
+
+    // Window-wide, so they work while a page has focus.
+    KeyBindings {
+        id: keys
+        actions: acts
     }
 }

@@ -727,7 +727,33 @@ CEF_QML_EDIT_COMMAND(redo, Redo)
 
 // ---- CEF -> QML state ------------------------------------------------------
 
-void CefWebView::cefLoadStart() {
+// Load events of the about:blank bootstrap page are internal. Its late
+// events can still arrive after bootstrapping ended, until the first real
+// page starts loading (m_dropInitialHistoryEntry is still set then).
+bool CefWebView::isBootstrapLoad(const QUrl& url) const {
+  return m_bootstrapping ||
+         (m_dropInitialHistoryEntry && url == QUrl(QStringLiteral("about:blank")));
+}
+
+void CefWebView::cefLoadEnd(const QUrl& url, int httpStatusCode) {
+  if (!isBootstrapLoad(url))
+    Q_EMIT loadFinished(url, httpStatusCode);
+}
+
+void CefWebView::cefLoadError(int errorCode, const QString& errorText, const QUrl& failedUrl) {
+  if (!m_bootstrapping)
+    Q_EMIT loadFailed(errorCode, errorText, failedUrl);
+}
+
+void CefWebView::cefLoadStart(const QUrl& url) {
+  const bool internal = isBootstrapLoad(url);
+  resetInitialHistory();
+  // After the history bookkeeping, so that a handler may navigate right away.
+  if (!internal)
+    Q_EMIT loadStarted(url);
+}
+
+void CefWebView::resetInitialHistory() {
   if (!m_dropInitialHistoryEntry || m_bootstrapping)
     return;
   // The first real page has committed: forget the about:blank bootstrap

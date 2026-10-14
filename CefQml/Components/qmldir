@@ -11,4 +11,9 @@ ContextMenu 1.0 ContextMenu.qml
 DownloadsBar 1.0 DownloadsBar.qml
 StatusBubble 1.0 StatusBubble.qml
 IconButton 1.0 IconButton.qml
+BrowserAction 1.0 BrowserAction.qml
+ActionRegistry 1.0 ActionRegistry.qml
+KeyBindings 1.0 KeyBindings.qml
+BrowserController 1.0 BrowserController.qml
+BrowserActions 1.0 BrowserActions.qml
 Browser 1.0 Browser.qml

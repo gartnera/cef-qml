@@ -32,7 +32,7 @@ Item {
     property bool interceptDownloads: false
 
     signal tabOpened(CefWebView view, int index)
-    signal tabClosed(CefWebView view)
+    signal tabClosed(CefWebView view, int index)
     signal lastTabClosed()
     // Tabs, order, current tab or any tab URL changed (persist with urls()).
     signal sessionChanged()
@@ -85,7 +85,7 @@ Item {
         views = list
         currentIndex = list.length === 0 ? -1 : Math.max(0, next)
         _updateVisibility()
-        tabClosed(view)
+        tabClosed(view, index)
         view.destroy()
         sessionChanged()
         if (list.length === 0) lastTabClosed()

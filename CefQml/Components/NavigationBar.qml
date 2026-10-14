@@ -8,8 +8,15 @@ Rectangle {
     property CefWebView view
     property alias addressField: address
     property alias searchUrl: address.searchUrl
+    // Optional KeyBindings: adds the keys to the buttons' tool tips.
+    property var keyBindings: null
     // Extra items placed after the address field (e.g. a menu button).
     default property alias trailing: trailingRow.data
+
+    function _tip(text, action) {
+        const k = keyBindings ? keyBindings.hint(action) : ""
+        return k === "" ? text : text + " (" + k + ")"
+    }
 
     implicitHeight: Style.barHeight + 4
     color: Style.surface
@@ -23,18 +30,21 @@ Rectangle {
         IconButton {
             objectName: "backButton"
             text: "←"
+            toolTip: bar._tip("Back", "nav.back")
             enabled: bar.view !== null && bar.view.canGoBack
             onClicked: bar.view.goBack()
         }
         IconButton {
             objectName: "forwardButton"
             text: "→"
+            toolTip: bar._tip("Forward", "nav.forward")
             enabled: bar.view !== null && bar.view.canGoForward
             onClicked: bar.view.goForward()
         }
         IconButton {
             objectName: "reloadButton"
             text: bar.view && bar.view.loading ? "×" : "↻"
+            toolTip: bar.view && bar.view.loading ? bar._tip("Stop", "nav.stop") : bar._tip("Reload", "nav.reload")
             enabled: bar.view !== null
             onClicked: bar.view.loading ? bar.view.stop() : bar.view.reload()
         }
@@ -58,6 +68,7 @@ Rectangle {
         width: visible ? implicitWidth : 0
         text: bar.view ? Math.round(bar.view.zoomFactor * 100) + "%" : ""
         textColor: Style.textDim
+        toolTip: bar._tip("Reset zoom", "zoom.reset")
         onClicked: bar.view.zoomFactor = 1
     }
 

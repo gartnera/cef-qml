@@ -270,7 +270,8 @@ Enum `CefWebView.ConsoleLevel`: `Debug`, `Info`, `Warning`, `Error`.
 |---|---|
 | `urlChanged()`, `titleChanged()`, `iconChanged()`, `loadingChanged()`, `loadProgressChanged()`, `navigationStateChanged()` (`canGoBack`/`canGoForward`), `hoveredUrlChanged()`, `tooltipChanged()`, `zoomFactorChanged()`, `audioMutedChanged()`, `fullscreenChanged()`, `backgroundColorChanged()`, `frameRateChanged()`, `activeChanged()`, `readyChanged()`, `userScriptsChanged()` | Property notifications. |
 | `frameSwapped()` | A new frame was rendered. |
-| `loadFinished(url url, int httpStatusCode)` | Main frame finished loading. |
+| `loadStarted(url url)` | A main-frame load (a new document) started. Not emitted for same-document navigations (`#fragment`, `history.pushState`). |
+| `loadFinished(url url, int httpStatusCode)` | Main frame finished loading. Chromium's error page for a failed load emits it too (after `loadFailed`). |
 | `loadFailed(int errorCode, string errorText, url failedUrl)` | Main frame failed to load (Chromium `net::Error` code). |
 | `newWindowRequested(url url, bool userGesture, bool background)` | `target=_blank`, `window.open()`, middle click, ... If nothing is connected, the URL opens in this view. |
 | `closeRequested()` | The page called `window.close()`. |
@@ -379,8 +380,13 @@ through `Style`, or copy one as the starting point for your own.
 
 | Component | Purpose and key API |
 |---|---|
-| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the usual keyboard shortcuts (Ctrl+T/W/L/F/R, Ctrl+Tab, Alt+Left/Right, Ctrl+±/0, Ctrl+1..9). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`. Functions: `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
-| `WebTabs` | Non-visual tab manager: one `CefWebView` per tab, stacked, only the current one visible. `views`, `count`, `currentIndex`, `currentView`, `homeUrl`, `viewDelegate` (a `Component` deriving from `CefWebView`), `openPopupsInNewTabs`, `closeOnRequest`. `openTab(url, background, index)`, `closeTab(index)`, `moveTab(from, to)`, `closeAll()`, `indexOf(view)`, `urls()` / `restore(urls, current)` for sessions. Signals `tabOpened`, `tabClosed`, `lastTabClosed`, `sessionChanged`, `contextMenuRequested(view, ...)`; set `interceptJavaScriptDialogs` / `interceptPermissions` / `interceptFileDialogs` / `interceptDownloads` to receive every tab's requests as `javaScriptDialogRequested(view, dialog)`, `permissionRequested(view, request)`, `fileDialogRequested(view, request)`, `downloadRequested(view, download)`. |
+| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings). Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
+| `BrowserController` | Non-visual programmatic API over a `WebTabs` (`tabs`): navigation that reports its result, tab helpers, zoom, recently closed tabs. See below. |
+| `BrowserAction` | A named command: `name` (`"tab.new"`), `text`, `description`, `category`, `enabled`, `checkable`/`checked`, `defaultShortcuts`, signal `triggered(args)`, `trigger(args)`. |
+| `ActionRegistry` | A set of `BrowserAction`s looked up and run by name: `model` (for menus or a command palette), `count`, `action(name)`, `has(name)`, `names()`, `trigger(name, args)`, `add(action or { name, text, defaultShortcuts, onTriggered })`, `remove(nameOrAction)`, signal `actionTriggered(name, args)`. |
+| `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar` and `window` they act on. |
+| `KeyBindings` | Window-wide keyboard shortcuts for an `ActionRegistry` (`actions`): defaults from the actions, `bindings` overrides, conflict resolution, modes. See below. |
+| `WebTabs` | Non-visual tab manager: one `CefWebView` per tab, stacked, only the current one visible. `views`, `count`, `currentIndex`, `currentView`, `homeUrl`, `viewDelegate` (a `Component` deriving from `CefWebView`), `openPopupsInNewTabs`, `closeOnRequest`. `openTab(url, background, index)`, `closeTab(index)`, `moveTab(from, to)`, `closeAll()`, `indexOf(view)`, `urls()` / `restore(urls, current)` for sessions. Signals `tabOpened`, `tabClosed(view, index)`, `lastTabClosed`, `sessionChanged`, `contextMenuRequested(view, ...)`; set `interceptJavaScriptDialogs` / `interceptPermissions` / `interceptFileDialogs` / `interceptDownloads` to receive every tab's requests as `javaScriptDialogRequested(view, dialog)`, `permissionRequested(view, request)`, `fileDialogRequested(view, request)`, `downloadRequested(view, download)`. |
 | `TabStrip` | Horizontal tab bar for a `WebTabs` (`tabs`, required): click selects, middle click or × closes, + emits `newTabRequested()`. `maxTabWidth`, `minTabWidth`. |
 | `NavigationBar` | Back / forward / reload-stop, an `AddressField` and a load-progress line for `view`. `addressField`, `searchUrl`; children are placed after the address field (e.g. a menu button). |
 | `AddressField` | URL/search field bound to `view`: shows the page URL while not edited; Enter navigates, non-addresses are searched with `searchUrl` (`%s` = query). `text`, `input`, `isInternalUrl` (urls shown as an empty field), `urlFor(text)`, `focusAndSelect()`, signal `navigated(url)`. |
@@ -394,6 +400,163 @@ through `Style`, or copy one as the starting point for your own.
 
 `Browser` answers file dialogs with Qt's `FileDialog` when the
 `QtQuick.Dialogs` module is installed (it is optional).
+
+### Actions, key bindings and scripting
+
+Everything the browser does from the keyboard is a named **action**
+(`BrowserAction`) in an `ActionRegistry`; a `KeyBindings` item maps keys to
+actions. `Browser` has all three (`actions`, `keyBindings`, `controller`),
+and the same pieces work in a layout of your own.
+
+| Action | Default keys | Args |
+|---|---|---|
+| `tab.new` | Ctrl+T | `{ url, background, index }`; without `url` opens `homeUrl` and focuses the address field |
+| `tab.close` | Ctrl+W, Ctrl+F4 | `{ index }` |
+| `tab.next`, `tab.previous` | Ctrl+Tab, Ctrl+PgDown / Ctrl+Shift+Tab, Ctrl+PgUp | |
+| `tab.select` | Ctrl+1..8 (tabs 1..8), Ctrl+9 (last tab) | `{ index }` (negative: from the end) |
+| `tab.duplicate` | | |
+| `tab.reopenClosed` | Ctrl+Shift+T | |
+| `nav.back`, `nav.forward` | Alt+Left, Alt+Right | |
+| `nav.reload`, `nav.reloadHard` | Ctrl+R, F5 / Ctrl+Shift+R, Shift+F5 | |
+| `nav.stop`, `nav.home` | – / Alt+Home | |
+| `address.focus` | Ctrl+L, F6, Alt+D | |
+| `page.find`, `page.findNext`, `page.findPrevious` | Ctrl+F / F3, Ctrl+G / Shift+F3, Ctrl+Shift+G | |
+| `zoom.in`, `zoom.out`, `zoom.reset` | Ctrl+=, Ctrl++ / Ctrl+- / Ctrl+0 | |
+| `edit.undo`, `edit.redo`, `edit.cut`, `edit.copy`, `edit.paste`, `edit.selectAll`, `page.copyUrl` | | |
+| `window.fullscreen` | F11 | `checked` reflects the window state |
+
+Every action has a human-readable `text`, and `enabled` follows the state
+(e.g. `nav.back` only with history). Disabled actions do not run, and their
+keys go through to the page or the focused field. Actions without default
+keys (`nav.stop`, `edit.*`) are meant for menus, palettes and your own
+bindings: window-wide Escape or Ctrl+C would take those keys from pages.
+
+**Rebinding keys.** `bindings` maps an action name to its keys, replacing the
+action's defaults; `[]` unbinds it. A key is a sequence string (`"Ctrl+K"`,
+`"Ctrl+K, Ctrl+S"`), a `StandardKey`, or `{ sequence, args }`:
+
+```qml
+Browser {
+    bindings: ({
+        "tab.new": ["Ctrl+T", "Ctrl+N"],                          // add a key
+        "nav.back": ["Alt+Left", "Ctrl+["],
+        "zoom.reset": [],                                          // unbind
+        "tab.select": [{ sequence: "Alt+1", args: { index: 0 } },  // keys with arguments
+                       { sequence: "Alt+9", args: { index: -1 } }],
+    })
+}
+```
+
+At run time: `keyBindings.bind("page.find", ["Ctrl+F", "/"])`,
+`unbind(name)`, `reset(name)` (back to the defaults; `reset()` for all), and
+for menus and tooltips `sequencesFor(name)` (`["Ctrl+T", "Ctrl+N"]`) and
+`hint(name)` (the first one). `entries` lists the effective bindings.
+
+**Conflicts.** One key can only run one action (Qt fires no `Shortcut` at all
+when two claim the same key), so `KeyBindings` gives each key to one action:
+a user binding beats an action's default, and between two of the same kind
+the later one wins (the later key in `bindings`, the latest `bind()`, the
+action registered last). Conflicts are logged once and listed in
+`conflicts` as `{ sequence, action, overridden }`. Bindings of names that do
+not exist (yet) are inactive.
+
+**Disabling and modes.** `keyBindings.enabled = false` releases every key
+(e.g. while an overlay of yours has focus). `modeBindings` holds alternative
+maps, active while `mode` names one; actions a mode does not mention keep
+their keys:
+
+```qml
+Browser {
+    id: browser
+    property bool viMode: false   // e.g. toggled by an action of yours
+    // Single letters are window-wide while the mode is on: only use such a
+    // mode while the user is not typing.
+    keyBindings.modeBindings: ({ "vi": { "nav.back": ["H"], "nav.forward": ["L"], "tab.close": ["D"] } })
+    keyBindings.mode: viMode ? "vi" : ""
+}
+```
+
+**Custom actions.** Declare a `BrowserAction` with a `registry`, or `add()`
+one; an action with the name of a built-in one replaces it:
+
+```qml
+Browser {
+    id: browser
+    bindings: ({ "app.duplicateAndPin": ["Ctrl+Shift+D"] })   // optional: your own keys
+
+    BrowserAction {
+        registry: browser.actions
+        name: "app.copyTitle"; text: "Copy page title"
+        defaultShortcuts: ["Ctrl+Shift+C"]
+        enabled: browser.currentView !== null
+        onTriggered: args => Cef.copyToClipboard(browser.title)
+    }
+    Component.onCompleted: browser.actions.add({
+        name: "app.duplicateAndPin", text: "Duplicate tab and move it first",
+        onTriggered: args => browser.controller.moveTab(browser.controller.duplicateTab(), 0)
+    })
+}
+```
+
+Run any action by name: `browser.trigger("tab.select", { index: 2 })` returns
+whether it ran. `actions.model` (each entry has `name`, `text`, `category`,
+`enabled`, ...) and `keyBindings.hint(name)` are all a command palette needs.
+
+**Scripting navigation.** `navigate(target, opts, callback)` accepts a URL or
+typed text (an address or a search), loads it, and returns a `Promise` of the
+result; `callback(result)` is called with the same result. The promise never
+rejects: check `result.ok`.
+
+```qml
+// in the current tab
+browser.navigate("example.com").then(r => console.log(r.ok, r.view.title))
+// in a new background tab, with a callback
+browser.navigate("https://qt.io", { newTab: true, background: true }, r => {
+    if (!r.ok) console.warn("failed:", r.errorText || r.error)
+})
+// another tab, giving up after 10 s
+browser.navigate("https://example.org/slow", { tab: 2, timeout: 10000 })
+```
+
+| `BrowserController` | |
+|---|---|
+| `navigate(target, opts, callback)` | `opts`: `newTab`, `background`, `index` (where the new tab goes), `tab` (navigate that tab instead of the current one), `timeout` (ms). Navigating to the current URL reloads. |
+| `whenLoaded(view, callback, opts)` | Promise of the next (or current) main-frame load of `view`. |
+| Result | `{ ok: true, view, url, httpStatusCode }`, `{ ok: false, view, url, errorCode, errorText }` (Chromium `net::Error`), or `{ ok: false, view, error }` with `error` `"timeout"`, `"superseded"` (another navigation of the same view started waiting), `"closed"` (tab closed) or `"noTab"`. Same-document navigations (`#fragment`) report `httpStatusCode` 0. |
+| `openTab(url, opts, callback)` | Opens a tab (`url` empty: `homeUrl`) and returns its view at once. `opts`: `{ background, index }` or `true` for background; `callback(result)` after the load. |
+| `closeTab(tab)`, `selectTab(tab)`, `moveTab(tab, to)`, `duplicateTab(tab)`, `nextTab()`, `previousTab()` | `tab` is an index (negative counts from the end), a view, or nothing for the current tab. Return `false` when there is no such tab. |
+| `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `home(tab)`, `zoomIn(tab)`, `zoomOut(tab)`, `resetZoom(tab)` | |
+| `viewAt(tab)`, `indexOf(tab)`, `findTab(predicate(view, index))`, `findTabs(predicate)`, `tabForUrl(url or RegExp)` | Lookup; `findTab` and `tabForUrl` return the first match or `null`. |
+| `reopenClosedTab()`, `closedTabs` | Recently closed tabs (`{ url, index }`, at most `closedTabsLimit`). |
+| `currentView`, `count`, `currentIndex`, `searchUrl`, `zoomStep`, `isInternalUrl`, `urlFor(text)` | |
+
+```qml
+// reuse a tab if one already shows the site
+const tab = browser.tabForUrl(/^https:\/\/github\.com\//)
+if (tab) browser.selectTab(tab)
+else browser.navigate("https://github.com", { newTab: true })
+```
+
+**In your own layout**, put the same pieces next to your `WebTabs`:
+
+```qml
+WebTabs { id: tabs }
+BrowserController { id: browse; tabs: tabs }
+BrowserActions {
+    id: actions
+    controller: browse
+    addressField: nav.addressField   // optional: address.focus
+    findBar: find                    // optional: page.find*
+    window: Window.window            // optional: window.fullscreen
+}
+KeyBindings { actions: actions; bindings: ({ "tab.new": ["Ctrl+N"] }) }
+```
+
+Give a key to one enabled `KeyBindings` per window: Qt treats a key claimed
+by two `Shortcut`s as ambiguous and fires neither (a disabled `Shortcut` can
+still take part). `KeyBindings` releases the keys of disabled actions and all
+keys while it is disabled, so several can take turns, but keep your own
+`Shortcut`s off the keys it uses.
 
 ## Hot reload
 
