@@ -233,8 +233,9 @@ class BookmarkStore : public QObject, public QQmlParserStatus {
 };
 
 // The children of one folder of a BookmarkStore as a list model, updated row
-// by row. Roles: id, type, isFolder, title, url, icon, dateAdded,
-// dateModified, parentId, position, childCount, depth, path.
+// by row. Roles: nodeId (the node's id; `id` is reserved in QML), type,
+// isFolder, title, url, icon, dateAdded, dateModified, parentId, position,
+// childCount, depth, path. get(row) returns the node object (with `id`).
 //
 //   ListView { model: BookmarkModel { store: bookmarks; folder: "bar" } }
 //

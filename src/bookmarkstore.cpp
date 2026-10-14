@@ -1340,7 +1340,7 @@ QVariant BookmarkModel::data(const QModelIndex& index, int role) const {
 }
 
 QHash<int, QByteArray> BookmarkModel::roleNames() const {
-  return {{IdRole, "id"},
+  return {{IdRole, "nodeId"},
           {TypeRole, "type"},
           {IsFolderRole, "isFolder"},
           {TitleRole, "title"},

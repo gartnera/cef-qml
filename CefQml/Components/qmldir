@@ -21,4 +21,10 @@ UserScriptStore 1.0 UserScriptStore.qml
 UserScriptManager 1.0 UserScriptManager.qml
 PanelOverlay 1.0 PanelOverlay.qml
 HistoryView 1.0 HistoryView.qml
+BookmarkButton 1.0 BookmarkButton.qml
+BookmarksBar 1.0 BookmarksBar.qml
+BookmarkMenu 1.0 BookmarkMenu.qml
+BookmarkEditor 1.0 BookmarkEditor.qml
+BookmarkManager 1.0 BookmarkManager.qml
+internal PopupMenu PopupMenu.qml
 Browser 1.0 Browser.qml
