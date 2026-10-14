@@ -233,15 +233,19 @@ Item {
             const n = loaded.add("https://new.test/", "New")
             verify(n !== a && n !== f)
             loaded.destroy()
+            const xhr = new XMLHttpRequest
+            const fileHas = text => {
+                xhr.open("GET", "file://" + store.filePath, false)
+                xhr.send()
+                return xhr.responseText.indexOf(text) > 0
+            }
+            // Destroying it (deferred) flushes its change to the same file:
+            // wait for that, or it could overwrite the debounced save below.
+            tryVerify(() => fileHas("new.test"), 5000)
 
             // Debounced save, then reload() reads the file again.
             store.add("https://later.test/", "Later")
-            const xhr = new XMLHttpRequest
-            tryVerify(() => {
-                xhr.open("GET", "file://" + store.filePath, false)
-                xhr.send()
-                return xhr.responseText.indexOf("later.test") > 0
-            }, 5000)
+            tryVerify(() => fileHas("later.test"), 5000)
             verify(store.reload())
             verify(store.isBookmarked("https://later.test/"))
             compare(store.count, 3)
