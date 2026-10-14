@@ -179,6 +179,9 @@ class CefQmlClient : public CefClient,
                                   TextInputMode inputMode) override;
 
   // CefRequestHandler
+  bool OnBeforeBrowse(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                      CefRefPtr<CefRequest> request, bool userGesture,
+                      bool isRedirect) override;
   bool OnOpenURLFromTab(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                         const CefString& targetUrl,
                         cef_window_open_disposition_t targetDisposition,

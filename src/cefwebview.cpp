@@ -26,6 +26,8 @@
 
 #include "include/cef_browser.h"
 #include "include/cef_navigation_entry.h"
+#include "include/cef_ssl_status.h"
+#include "include/cef_x509_certificate.h"
 
 Q_DECLARE_LOGGING_CATEGORY(lcCef)
 
@@ -123,6 +125,10 @@ class RootNode : public QSGNode {
   TextureNode* view = nullptr;
   TextureNode* popup = nullptr;
 };
+
+QString qstr(const CefString& s) {
+  return QString::fromStdU16String(s.ToString16());
+}
 
 constexpr double kZoomBase = 1.2;  // Chromium: factor = 1.2 ^ level
 
@@ -352,7 +358,7 @@ void CefWebView::cefAfterCreated() {
   if (!h)
     return;
   if (!qFuzzyCompare(m_zoomFactor, 1.0))
-    h->SetZoomLevel(std::log(m_zoomFactor) / std::log(kZoomBase));
+    applyZoom();
   if (m_audioMuted)
     h->SetAudioMuted(true);
   h->WasHidden(!isVisible() || !m_active);
@@ -412,6 +418,8 @@ void CefWebView::itemChange(ItemChange change, const ItemChangeData& value) {
   switch (change) {
     case ItemVisibleHasChanged:
       h->WasHidden(!value.boolValue || !m_active);
+      if (value.boolValue && m_active)
+        applyZoom();
       break;
     case ItemSceneChange:
     case ItemDevicePixelRatioHasChanged:
@@ -558,9 +566,19 @@ void CefWebView::setZoomFactor(double factor) {
   if (qFuzzyCompare(factor, m_zoomFactor))
     return;
   m_zoomFactor = factor;
-  if (auto h = host())
-    h->SetZoomLevel(std::log(factor) / std::log(kZoomBase));
+  applyZoom();
   Q_EMIT zoomFactorChanged();
+}
+
+// Chromium keeps one zoom level per host (HostZoomMap, regardless of scheme
+// and port) and applies it when a document commits; another view zooming the
+// same host changes this one too. The view's own zoomFactor wins: it is
+// re-applied when a document starts loading in a shown view and when the
+// view is shown. Two views of one host shown at the same time still share
+// the zoom of the one that applied it last.
+void CefWebView::applyZoom() {
+  if (auto h = host())
+    h->SetZoomLevel(std::log(m_zoomFactor) / std::log(kZoomBase));
 }
 
 void CefWebView::setAudioMuted(bool muted) {
@@ -595,8 +613,11 @@ void CefWebView::setActive(bool active) {
   if (active == m_active)
     return;
   m_active = active;
-  if (auto h = host())
+  if (auto h = host()) {
     h->WasHidden(!isVisible() || !active);
+    if (active && isVisible())
+      applyZoom();
+  }
   Q_EMIT activeChanged();
 }
 
@@ -932,8 +953,89 @@ bool CefWebView::isBootstrapLoad(const QUrl& url) const {
 }
 
 void CefWebView::cefLoadEnd(const QUrl& url, int httpStatusCode) {
+  updateSecurity();
   if (!isBootstrapLoad(url))
     Q_EMIT loadFinished(url, httpStatusCode);
+}
+
+void CefWebView::cefBeforeBrowse(const QUrl& url, bool userGesture, bool isRedirect) {
+  if (m_bootstrapping && url == QUrl(QStringLiteral("about:blank")))
+    return;
+  Q_EMIT navigationRequested(url, userGesture, isRedirect);
+}
+
+void CefWebView::updateSecurity() {
+  bool secure = false;
+  QVariantMap cert;
+  CefRefPtr<CefNavigationEntry> entry;
+  if (auto h = host())
+    entry = h->GetVisibleNavigationEntry();
+  CefRefPtr<CefSSLStatus> ssl = entry ? entry->GetSSLStatus() : nullptr;
+  if (ssl && ssl->IsSecureConnection()) {
+    static const std::pair<int, const char*> kErrors[] = {
+        {CERT_STATUS_COMMON_NAME_INVALID, "common-name-invalid"},
+        {CERT_STATUS_DATE_INVALID, "date-invalid"},
+        {CERT_STATUS_AUTHORITY_INVALID, "authority-invalid"},
+        {CERT_STATUS_REVOKED, "revoked"},
+        {CERT_STATUS_INVALID, "invalid"},
+        {CERT_STATUS_WEAK_SIGNATURE_ALGORITHM, "weak-signature-algorithm"},
+        {CERT_STATUS_NON_UNIQUE_NAME, "non-unique-name"},
+        {CERT_STATUS_WEAK_KEY, "weak-key"},
+        {CERT_STATUS_PINNED_KEY_MISSING, "pinned-key-missing"},
+        {CERT_STATUS_NAME_CONSTRAINT_VIOLATION, "name-constraint-violation"},
+        {CERT_STATUS_VALIDITY_TOO_LONG, "validity-too-long"},
+        {CERT_STATUS_CT_COMPLIANCE_FAILED, "ct-compliance-failed"},
+    };
+    const int status = ssl->GetCertStatus();
+    QStringList errors;
+    for (const auto& [bit, name] : kErrors) {
+      if (status & bit)
+        errors << QString::fromLatin1(name);
+    }
+    const bool mixed = ssl->GetContentStatus() != SSL_CONTENT_NORMAL_CONTENT;
+    cert.insert(QStringLiteral("errors"), errors);
+    cert.insert(QStringLiteral("mixedContent"), mixed);
+    static const std::pair<cef_ssl_version_t, const char*> kVersions[] = {
+        {SSL_CONNECTION_VERSION_TLS1, "TLS 1.0"},   {SSL_CONNECTION_VERSION_TLS1_1, "TLS 1.1"},
+        {SSL_CONNECTION_VERSION_TLS1_2, "TLS 1.2"}, {SSL_CONNECTION_VERSION_TLS1_3, "TLS 1.3"},
+        {SSL_CONNECTION_VERSION_QUIC, "QUIC"},
+    };
+    for (const auto& [v, name] : kVersions) {
+      if (ssl->GetSSLVersion() == v)
+        cert.insert(QStringLiteral("protocol"), QString::fromLatin1(name));
+    }
+    if (auto x509 = ssl->GetX509Certificate()) {
+      auto principal = [](CefRefPtr<CefX509CertPrincipal> p) {
+        if (!p)
+          return QString();
+        const QString cn = qstr(p->GetCommonName());
+        return cn.isEmpty() ? qstr(p->GetDisplayName()) : cn;
+      };
+      cert.insert(QStringLiteral("subject"), principal(x509->GetSubject()));
+      cert.insert(QStringLiteral("issuer"), principal(x509->GetIssuer()));
+      if (auto subject = x509->GetSubject()) {
+        std::vector<CefString> orgs;
+        subject->GetOrganizationNames(orgs);
+        if (!orgs.empty())
+          cert.insert(QStringLiteral("organization"), qstr(orgs.front()));
+      }
+      auto date = [](const CefBaseTime& t) {
+        // CefBaseTime: microseconds since 1601-01-01 UTC.
+        constexpr qint64 kEpochDeltaUs = 11644473600LL * 1000000LL;
+        return QDateTime::fromMSecsSinceEpoch((t.val - kEpochDeltaUs) / 1000, Qt::UTC);
+      };
+      cert.insert(QStringLiteral("validFrom"), date(x509->GetValidStart()));
+      cert.insert(QStringLiteral("validTo"), date(x509->GetValidExpiry()));
+    }
+    const QString scheme = m_url.scheme();
+    secure = errors.isEmpty() && !mixed &&
+             (scheme == QLatin1String("https") || scheme == QLatin1String("wss"));
+  }
+  if (secure == m_secure && cert == m_certificate)
+    return;
+  m_secure = secure;
+  m_certificate = cert;
+  Q_EMIT securityChanged();
 }
 
 void CefWebView::cefLoadError(int errorCode, const QString& errorText, const QUrl& failedUrl) {
@@ -944,6 +1046,11 @@ void CefWebView::cefLoadError(int errorCode, const QString& errorText, const QUr
 void CefWebView::cefLoadStart(const QUrl& url) {
   const bool internal = isBootstrapLoad(url);
   resetInitialHistory();
+  // A hidden view re-applies its zoom when shown: applying it now would
+  // also change the visible view of the same host.
+  if (isVisible() && m_active)
+    applyZoom();
+  updateSecurity();
   // The new document reports its own focus; the old one may not have blurred.
   setEditableFocused(false);
   // After the history bookkeeping, so that a handler may navigate right away.
@@ -1016,6 +1123,8 @@ void CefWebView::cefLoadingStateChange(bool loading, bool canGoBack, bool canGoF
     canGoBack = false;
   if (loading != m_loading) {
     m_loading = loading;
+    if (!loading)
+      updateSecurity();
     Q_EMIT loadingChanged();
   }
   if (canGoBack != m_canGoBack || canGoForward != m_canGoForward) {

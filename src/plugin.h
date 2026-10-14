@@ -19,11 +19,14 @@ class CefGlobal : public QObject {
   Q_PROPERTY(bool temporaryProfile READ temporaryProfile CONSTANT)
   // All downloads of this process (CefDownload objects), oldest first.
   Q_PROPERTY(QList<QObject*> downloads READ downloads NOTIFY downloadsChanged)
+  // Names accepted by setContentSetting() / contentSetting().
+  Q_PROPERTY(QStringList contentSettingTypes READ contentSettingTypes CONSTANT)
 
  public:
   explicit CefGlobal(QObject* parent = nullptr);
 
   QList<QObject*> downloads() const;
+  QStringList contentSettingTypes() const;
 
   QString version() const;
   QString chromiumVersion() const;
@@ -38,6 +41,19 @@ class CefGlobal : public QObject {
   Q_INVOKABLE QUrl urlFromUserInput(const QString& text) const;
 
   Q_INVOKABLE void copyToClipboard(const QString& text) const;
+
+  // Chromium's own content settings (profile-wide, persisted by Chromium):
+  // the exception for the origin of `url`, or the default when `url` is
+  // empty. `type` is one of contentSettingTypes ("javascript", "images",
+  // "popups", "notifications", "geolocation", "camera", ...); `value` is
+  // "allow", "block", "ask", "session-only" (cookies) or "default" (remove
+  // the exception). JavaScript and images apply to documents loaded after
+  // the change. Returns false for an unknown type or value.
+  //   Cef.setContentSetting("https://example.com", "javascript", "block")
+  Q_INVOKABLE bool setContentSetting(const QUrl& url, const QString& type,
+                                     const QString& value) const;
+  // The effective value for `url` ("allow", "block", "ask", ...).
+  Q_INVOKABLE QString contentSetting(const QUrl& url, const QString& type) const;
 
   // Value of an environment variable ("" if unset); handy for dev setups.
   Q_INVOKABLE QString environment(const QString& name) const;

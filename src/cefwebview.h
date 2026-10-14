@@ -38,6 +38,10 @@ class CefWebView : public QQuickItem {
   Q_PROPERTY(bool canGoForward READ canGoForward NOTIFY navigationStateChanged)
   Q_PROPERTY(QString hoveredUrl READ hoveredUrl NOTIFY hoveredUrlChanged)
   Q_PROPERTY(QString tooltip READ tooltip NOTIFY tooltipChanged)
+  // The view's page zoom (0.25 .. 5). It belongs to the view: it is kept
+  // across navigations and re-applied when the view is shown (Chromium itself
+  // shares one zoom level per host between all views showing that host).
+  // For Chrome-like per-site zoom, WebTabs.siteSettings sets it per origin.
   Q_PROPERTY(double zoomFactor READ zoomFactor WRITE setZoomFactor NOTIFY zoomFactorChanged)
   Q_PROPERTY(bool audioMuted READ audioMuted WRITE setAudioMuted NOTIFY audioMutedChanged)
   Q_PROPERTY(bool fullscreen READ fullscreen NOTIFY fullscreenChanged)
@@ -63,6 +67,14 @@ class CefWebView : public QQuickItem {
   // contenteditable element. Tracked by focus events in the page, so it also
   // turns false while the view itself does not have the keyboard focus.
   Q_PROPERTY(bool editableFocused READ editableFocused NOTIFY editableFocusedChanged)
+  // Connection security of the current page: true for https (or wss) with
+  // a valid certificate and no mixed content. Updated as the page loads.
+  Q_PROPERTY(bool secure READ secure NOTIFY securityChanged)
+  // Certificate summary of the current page, empty for non-TLS pages:
+  // { subject, issuer, organization, validFrom, validTo (Date), errors
+  // (["date-invalid", "authority-invalid", ...]), mixedContent (bool),
+  // protocol ("TLS 1.3") }.
+  Q_PROPERTY(QVariantMap certificate READ certificate NOTIFY securityChanged)
 
  public:
   enum ConsoleLevel { Debug = 0, Info, Warning, Error };
@@ -101,6 +113,8 @@ class CefWebView : public QQuickItem {
   bool ready() const { return m_ready; }
   int frameCount() const { return m_frameCount; }
   bool editableFocused() const { return m_editableFocused; }
+  bool secure() const { return m_secure; }
+  QVariantMap certificate() const { return m_certificate; }
 
   Q_INVOKABLE void goBack();
   Q_INVOKABLE void goForward();
@@ -173,6 +187,7 @@ class CefWebView : public QQuickItem {
   void userScriptsChanged();
   void discardedChanged();
   void editableFocusedChanged();
+  void securityChanged();
   // DevTools protocol events. Enable a domain first, e.g.
   // devToolsMethod("Network.enable").
   void devToolsEvent(const QString& method, const QVariant& params);
@@ -180,6 +195,11 @@ class CefWebView : public QQuickItem {
   // A page asked for a new window/tab (target=_blank, window.open, middle
   // click, ...). If nothing is connected, the URL is opened in this view.
   void newWindowRequested(const QUrl& url, bool userGesture, bool background);
+  // Emitted synchronously before a main-frame navigation sends its request
+  // (also for each redirect, and for browser-initiated loads), so a handler
+  // can prepare per-site state, e.g. Cef.setContentSetting() for the target.
+  // Not emitted for same-document navigations.
+  void navigationRequested(const QUrl& url, bool userGesture, bool isRedirect);
   // Main-frame load events. loadStarted: a new document committed (not for
   // same-document navigations). None are emitted for the internal
   // about:blank bootstrap page.
@@ -236,6 +256,8 @@ class CefWebView : public QQuickItem {
   CefRefPtr<CefBrowserHost> host() const;
   void forwardMouseButton(QMouseEvent* event, bool up, int clickCount);
   void setEditableFocused(bool focused);
+  void applyZoom();
+  void updateSecurity();
   QPoint toBrowser(QPointF pos) const;
   qreal devicePixelRatio() const;
   void loadInBrowser(const QUrl& url);
@@ -252,6 +274,7 @@ class CefWebView : public QQuickItem {
   void cefAddressChange(const QUrl& url);
   void cefLoadStart(const QUrl& url);
   void cefLoadEnd(const QUrl& url, int httpStatusCode);
+  void cefBeforeBrowse(const QUrl& url, bool userGesture, bool isRedirect);
   void cefLoadError(int errorCode, const QString& errorText, const QUrl& failedUrl);
   void cefTitleChange(const QString& title);
   void cefIconChange(const QUrl& icon);
@@ -314,6 +337,8 @@ class CefWebView : public QQuickItem {
   int m_frameCount = 0;
   bool m_imeEnabled = false;  // Chromium's text input mode (IME)
   bool m_editableFocused = false;
+  bool m_secure = false;
+  QVariantMap m_certificate;
   QRect m_imeBounds;
 
   QImage m_view;

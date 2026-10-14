@@ -3,10 +3,12 @@
 #include "bookmarkstore.h"
 #include "cefcontext.h"
 #include "cefwebview.h"
+#include "contentsettings.h"
 #include "historystore.h"
 #include "hotreload.h"
 #include "jsonstore.h"
 #include "requests.h"
+#include "sitesettings.h"
 
 #include <QClipboard>
 #include <QDir>
@@ -27,6 +29,19 @@ QList<QObject*> CefGlobal::downloads() const {
   for (CefDownload* d : CefContext::instance()->downloads())
     list.append(d);
   return list;
+}
+
+QStringList CefGlobal::contentSettingTypes() const {
+  return ContentSettings::types();
+}
+
+bool CefGlobal::setContentSetting(const QUrl& url, const QString& type,
+                                  const QString& value) const {
+  return ContentSettings::set(url, type, value);
+}
+
+QString CefGlobal::contentSetting(const QUrl& url, const QString& type) const {
+  return ContentSettings::get(url, type);
 }
 
 QString CefGlobal::version() const {
@@ -112,6 +127,8 @@ void CefQmlPlugin::registerTypes(const char* uri) {
   qmlRegisterType<HistoryModel>(uri, 1, 0, "HistoryModel");
   qmlRegisterType<BookmarkStore>(uri, 1, 0, "BookmarkStore");
   qmlRegisterType<BookmarkModel>(uri, 1, 0, "BookmarkModel");
+  qmlRegisterType<SiteSettings>(uri, 1, 0, "SiteSettings");
+  qmlRegisterType<SiteSettingsModel>(uri, 1, 0, "SiteSettingsModel");
   const QString why = QStringLiteral("created by CefWebView");
   qmlRegisterUncreatableType<CefJavaScriptDialog>(uri, 1, 0, "CefJavaScriptDialog", why);
   qmlRegisterUncreatableType<CefPermissionRequest>(uri, 1, 0, "CefPermissionRequest", why);

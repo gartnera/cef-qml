@@ -22,8 +22,8 @@ fi
 export QML_IMPORT_PATH="$builddir${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}"
 # Isolated browser profile per run.
 tmp=$(mktemp -d)
-trap 'kill $weston_pid 2>/dev/null || true; rm -rf "$tmp"' EXIT INT TERM
-weston_pid=
+trap 'kill $weston_pid $http_pid 2>/dev/null || true; rm -rf "$tmp"' EXIT INT TERM
+weston_pid= http_pid=
 export CEF_QML_CACHE_DIR="$tmp/profile"
 # Scratch files (downloads; QML that tst_hotreload writes through
 # XMLHttpRequest). Kept out of <builddir> so the suites also run against an
@@ -31,6 +31,23 @@ export CEF_QML_CACHE_DIR="$tmp/profile"
 export CEF_QML_TEST_DIR="$tmp/data"
 mkdir -p "$CEF_QML_TEST_DIR/test-hotreload" "$CEF_QML_TEST_DIR/test-downloads"
 export QML_XHR_ALLOW_FILE_WRITE=1 QML_XHR_ALLOW_FILE_READ=1
+
+# Local HTTP server for suites that need real (non-opaque) origins:
+# TEST_HTTP_ORIGIN=http://127.0.0.1:<port>. Without python3 the variable stays
+# unset and those tests skip.
+if command -v python3 >/dev/null 2>&1; then
+  python3 "$here/http_server.py" "$tmp/http.port" >"$tmp/http.log" 2>&1 &
+  http_pid=$!
+  i=0
+  while [ ! -s "$tmp/http.port" ]; do
+    i=$((i + 1))
+    if [ $i -gt 100 ] || ! kill -0 $http_pid 2>/dev/null; then
+      echo "http server failed to start:" >&2; cat "$tmp/http.log" >&2; exit 1
+    fi
+    sleep 0.1
+  done
+  export TEST_HTTP_ORIGIN="http://127.0.0.1:$(cat "$tmp/http.port")"
+fi
 
 case $mode in
   offscreen)

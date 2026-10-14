@@ -484,6 +484,14 @@ void CefQmlClient::OnVirtualKeyboardRequested(CefRefPtr<CefBrowser>,
 
 // ---- CefRequestHandler -----------------------------------------------------
 
+bool CefQmlClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
+                                  CefRefPtr<CefRequest> request, bool userGesture,
+                                  bool isRedirect) {
+  if (m_view && frame->IsMain())
+    m_view->cefBeforeBrowse(QUrl(qstr(request->GetURL())), userGesture, isRedirect);
+  return false;
+}
+
 bool CefQmlClient::OnOpenURLFromTab(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
                                     const CefString& targetUrl,
                                     cef_window_open_disposition_t targetDisposition,
