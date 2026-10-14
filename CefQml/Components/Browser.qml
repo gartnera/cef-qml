@@ -61,6 +61,19 @@ FocusScope {
     // whether it is shown.
     property alias historyView: historyPanel
     readonly property bool historyVisible: historyOverlay.visible
+    // Bookmarks (BookmarkStore, Cef.dataDir/bookmarks.json): the star in
+    // the navigation bar, the bookmarks bar, the bookmark manager and
+    // address-bar suggestions use it. Set to null to disable bookmarks;
+    // share one store between several Browser windows.
+    property QtObject bookmarkStore: BookmarkStore { path: "bookmarks.json" }
+    // Show the bookmarks bar under the navigation bar ("bookmarks.showBar",
+    // Ctrl+Shift+B).
+    property bool showBookmarksBar: true
+    property alias bookmarksBar: bmBar
+    // The bookmark manager overlay (BookmarkManager; action
+    // "bookmarks.manage", Ctrl+Shift+O) and whether it is shown.
+    property alias bookmarkManager: bmManager
+    readonly property bool bookmarkManagerVisible: bookmarkOverlay.visible
 
     signal lastTabClosed()
 
@@ -89,6 +102,16 @@ FocusScope {
     }
     function showHistory() { historyOverlay.open() }
     function hideHistory() { historyOverlay.close() }
+    function showBookmarks() { bookmarkOverlay.open() }
+    function hideBookmarks() { bookmarkOverlay.close() }
+    // Opens a bookmark (or any URL) as the bookmark components do: here, or
+    // in a background tab next to the current one.
+    function openBookmark(url, newTab) {
+        if (newTab) return ctl.openTab(url, { background: true, index: webTabs.currentIndex + 1 })
+        const r = ctl.navigate(url)
+        if (webTabs.currentView) webTabs.currentView.forceActiveFocus(Qt.OtherFocusReason)
+        return r
+    }
     function isUserScriptUrl(url) {
         return /^(https?|file):[^?#]*\.user\.js([?#].*)?$/i.test(String(url))
     }
@@ -165,12 +188,26 @@ FocusScope {
         view: webTabs.currentView
         searchUrl: browser.searchUrl
         keyBindings: keys
+        bookmarkStore: browser.bookmarkStore
         addressField.isInternalUrl: u => browser.isNewTabUrl(u)
+    }
+
+    BookmarksBar {
+        id: bmBar
+        anchors.top: navBar.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        store: browser.bookmarkStore
+        visible: browser.showBookmarksBar && store !== null
+        height: visible ? implicitHeight : 0
+        onOpenRequested: (url, newTab) => browser.openBookmark(url, newTab)
+        onManageRequested: bookmarkOverlay.open()
+        onHideRequested: browser.showBookmarksBar = false
     }
 
     FindBar {
         id: findBar
-        anchors.top: navBar.bottom
+        anchors.top: bmBar.bottom
         anchors.left: parent.left
         anchors.right: parent.right
         view: webTabs.currentView
@@ -215,7 +252,7 @@ FocusScope {
             anchors.fill: parent
             available: browser.userScriptStore !== null
             returnFocusTo: webTabs.currentView
-            onOpened: historyOverlay.close()
+            onOpened: { historyOverlay.close(); bookmarkOverlay.close() }
             UserScriptManager {
                 id: usManager
                 objectName: "userScriptManager"
@@ -233,7 +270,7 @@ FocusScope {
             panelWidth: 760
             available: browser.historyStore !== null
             returnFocusTo: webTabs.currentView
-            onOpened: userScriptOverlay.close()
+            onOpened: { userScriptOverlay.close(); bookmarkOverlay.close() }
             HistoryView {
                 id: historyPanel
                 objectName: "historyView"
@@ -249,6 +286,28 @@ FocusScope {
                     ctl.navigate(url)
                 }
                 onCloseRequested: historyOverlay.close()
+            }
+        }
+
+        PanelOverlay {
+            id: bookmarkOverlay
+            objectName: "bookmarkOverlay"
+            anchors.fill: parent
+            panelWidth: 860
+            available: browser.bookmarkStore !== null
+            returnFocusTo: webTabs.currentView
+            onOpened: { userScriptOverlay.close(); historyOverlay.close() }
+            BookmarkManager {
+                id: bmManager
+                objectName: "bookmarkManager"
+                anchors.fill: parent
+                store: browser.bookmarkStore
+                // Open here and close; Ctrl/middle click: background tab.
+                onOpenRequested: (url, newTab) => {
+                    if (!newTab) bookmarkOverlay.close()
+                    browser.openBookmark(url, newTab)
+                }
+                onCloseRequested: bookmarkOverlay.close()
             }
         }
     }
@@ -273,6 +332,7 @@ FocusScope {
         objectName: "addressSuggestions"
         addressField: navBar.addressField
         historyStore: browser.historyStore
+        bookmarkStore: browser.bookmarkStore
         tabs: webTabs
         navigate: (url, newTab) => {
             if (!newTab) return navBar.addressField.go(url)
@@ -312,6 +372,11 @@ FocusScope {
         window: browser.Window.window
         userScriptManager: browser.userScriptStore ? userScriptOverlay : null
         historyView: browser.historyStore ? historyOverlay : null
+        bookmarkStore: browser.bookmarkStore
+        bookmarkButton: browser.bookmarkStore ? navBar.bookmarkButton : null
+        bookmarkManager: browser.bookmarkStore ? bookmarkOverlay : null
+        bookmarksBarTarget: browser.bookmarkStore ? browser : null
+        bookmarksBarProperty: "showBookmarksBar"
     }
 
     // Install prompt for *.user.js pages loaded in the current tab.

@@ -13,8 +13,12 @@ import CefQml
 // page.find* need `findBar` (open(), findNext(forward), visible, text),
 // window.fullscreen needs `window`, userscripts.manage needs
 // `userScriptManager` and history.show `historyView` (both: toggle(),
-// visible; e.g. a PanelOverlay). Declare more BrowserActions inside, or
-// replace one by adding an action with the same name.
+// visible; e.g. a PanelOverlay). bookmark.toggle needs `bookmarkStore` (or
+// a `bookmarkButton`, whose toggle() also shows its editor), bookmarks.manage
+// a `bookmarkManager` (toggle(), visible) and bookmarks.showBar a
+// `bookmarksBarTarget` whose boolean `bookmarksBarProperty` (default
+// "visible") it flips. Declare more BrowserActions inside, or replace one
+// by adding an action with the same name.
 ActionRegistry {
     id: acts
 
@@ -24,6 +28,11 @@ ActionRegistry {
     property var window: null
     property var userScriptManager: null
     property var historyView: null
+    property var bookmarkStore: null
+    property var bookmarkButton: null
+    property var bookmarkManager: null
+    property var bookmarksBarTarget: null
+    property string bookmarksBarProperty: "visible"
 
     readonly property CefWebView view: controller ? controller.currentView : null
     readonly property bool hasView: view !== null
@@ -214,6 +223,53 @@ ActionRegistry {
         checked: acts.historyView !== null && acts.historyView.visible
         enabled: acts.historyView !== null
         onTriggered: acts.historyView.toggle()
+    }
+
+    // bookmark.*, bookmarks.*
+    BrowserAction {
+        name: "bookmark.toggle"; text: "Bookmark this page"
+        description: "Bookmark the current page, or remove its bookmarks."
+        defaultShortcuts: ["Ctrl+D"]
+        checked: acts.hasView && acts.bookmarkStore !== null
+                 && (acts.bookmarkStore.revision, acts.bookmarkStore.isBookmarked(acts.view.url))
+        enabled: acts.hasView && (acts.bookmarkStore !== null || acts.bookmarkButton !== null)
+        onTriggered: {
+            if (acts.bookmarkButton && acts.bookmarkButton.view === acts.view) {
+                acts.bookmarkButton.toggle()
+                return
+            }
+            const u = acts.view.url.toString()
+            if (u === "" || u === "about:blank") return
+            const icon = acts.view.icon.toString()
+            acts.bookmarkStore.toggle(acts.view.url, acts.view.title,
+                                      { icon: icon.startsWith("http") || icon.startsWith("data:") ? icon : "" })
+        }
+    }
+    BrowserAction {
+        id: showBarAction
+        name: "bookmarks.showBar"; text: "Show bookmarks bar"
+        description: "Show or hide the bookmarks bar (args: { show })."
+        defaultShortcuts: ["Ctrl+Shift+B"]
+        checkable: true
+        checked: acts._barShown()
+        enabled: acts.bookmarksBarTarget !== null
+        onTriggered: args => {
+            const show = args.show !== undefined ? !!args.show : checked
+            acts.bookmarksBarTarget[acts.bookmarksBarProperty] = show
+            checked = Qt.binding(() => acts._barShown())
+        }
+    }
+    BrowserAction {
+        name: "bookmarks.manage"; text: "Bookmark manager"
+        description: "Show or hide the bookmark manager."
+        defaultShortcuts: ["Ctrl+Shift+O"]
+        checked: acts.bookmarkManager !== null && acts.bookmarkManager.visible
+        enabled: acts.bookmarkManager !== null
+        onTriggered: acts.bookmarkManager.toggle()
+    }
+
+    function _barShown() {
+        return bookmarksBarTarget !== null && !!bookmarksBarTarget[bookmarksBarProperty]
     }
 
     function _findStep(forward) {

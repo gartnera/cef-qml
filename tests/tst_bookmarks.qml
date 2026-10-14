@@ -383,4 +383,620 @@ Item {
             store.save()
         }
     }
+
+    // --- Browser: star, bar, suggestions, manager ------------------------------
+
+    Browser {
+        id: browser
+        anchors.fill: parent
+        focus: true
+        searchUrl: "data:text/html,<title>search</title><p id=q>%s</p>"
+    }
+
+    // A bar in a custom layout (no Browser).
+    BookmarksBar {
+        id: plainBar
+        objectName: "plainBar"
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        z: 5
+        visible: false
+        // Only while its test runs (the store suite changes `store`).
+        store: visible ? store : null
+        showOtherFolder: false
+        property var opened: []
+        onOpenRequested: (url, newTab) => opened.push([url, newTab])
+    }
+
+    TestCase {
+        name: "BookmarkUI"
+        when: windowShown
+
+        property var bm: browser.bookmarkStore
+        property var star: browser.navigationBar.bookmarkButton
+        property var bar: browser.bookmarksBar
+        property var mgr: browser.bookmarkManager
+
+        function find(parent, name) {
+            const item = findChild(parent, name)
+            verify(item, "no child " + name)
+            return item
+        }
+        function view() { return browser.currentView }
+        function center(item) { return item.mapToItem(root, item.width / 2, item.height / 2) }
+        function click(item, button, modifiers) {
+            const p = center(item)
+            mouseClick(root, p.x, p.y, button || Qt.LeftButton, modifiers || Qt.NoModifier)
+        }
+        function type(text) {
+            for (const ch of text) keyClick(ch)
+        }
+        function closePopups() {
+            if (star.editor.opened) star.editor.cancel()
+            if (bar.editor.opened) bar.editor.cancel()
+            if (mgr.editor.opened) mgr.editor.cancel()
+            bar.menu.close()
+            bar.contextMenu.close()
+            browser.hideBookmarks()
+            browser.hideHistory()
+        }
+        function reset(title) {
+            mouseMove(root, root.width - 5, root.height - 5)
+            closePopups()
+            browser.showBookmarksBar = true
+            browser.tabs.restore([page(title || "start")], 0)
+            tryCompare(browser, "title", title || "start", 10000)
+            view().forceActiveFocus()
+            bm.clear()
+            browser.historyStore.clear()
+        }
+        // Bookmarks on the bar: [one, two, Folder [inside, Sub [deep]]].
+        function fill() {
+            const ids = {}
+            ids.one = bm.add(page("Bar one"), "Bar one")
+            ids.two = bm.add(page("Bar two"), "Bar two")
+            ids.folder = bm.addFolder("Folder")
+            ids.inside = bm.add(page("Inside"), "Inside", { folder: ids.folder })
+            ids.sub = bm.addFolder("Sub", { folder: ids.folder })
+            ids.deep = bm.add(page("Deep"), "Deep", { folder: ids.sub })
+            tryCompare(bar, "count", 3, 2000)
+            waitForLayout(bar)
+            return ids
+        }
+        // The Row places new items at its next polish.
+        function waitForLayout(b) {
+            tryVerify(() => {
+                for (let i = 1; i < b.count; ++i) {
+                    const p = b.itemAt(i - 1), it = b.itemAt(i)
+                    if (!p || !it || it.x < p.x + p.width) return false
+                }
+                return true
+            }, 2000, "bar laid out")
+        }
+        function barItem(i) {
+            const it = bar.itemAt(i)
+            verify(it, "no bar item " + i)
+            return it
+        }
+        function labels(menu) { return menu.entries.map(e => e ? e.label : "-") }
+
+        function initTestCase() {
+            tryCompare(browser.tabs, "count", 1, 10000)
+            tryCompare(browser, "title", "New Tab", 15000)
+        }
+
+        function test_01_browser_defaults() {
+            verify(bm, "Browser creates a BookmarkStore")
+            verify(bm.filePath.endsWith("/bookmarks.json"), bm.filePath)
+            verify(browser.showBookmarksBar)
+            verify(bar.visible)
+            verify(star.visible)
+            verify(bar.y >= browser.navigationBar.y + browser.navigationBar.height, "bar under the navigation bar")
+            compare(browser.addressSuggestions.providers.length, 4)
+            for (const name of ["bookmark.toggle", "bookmarks.showBar", "bookmarks.manage"])
+                verify(browser.actions.action(name), name)
+            compare(browser.keyBindings.hint("bookmark.toggle"), "Ctrl+D")
+        }
+
+        function test_02_star_follows_navigation() {
+            reset("Starred")
+            verify(!star.bookmarked)
+            compare(star.text, "☆")
+            click(star)
+            verify(star.bookmarked)
+            compare(star.text, "★")
+            compare(bm.count, 1)
+            const b = bm.bookmarksFor(view().url)[0]
+            compare(b.title, "Starred")
+            compare(b.parent, bm.barFolder)
+            // The editor: rename, Enter saves.
+            const ed = star.editor
+            verify(ed.opened)
+            const card = find(ed, "bookmarkEditor")
+            verify(card.visible)
+            const name = ed.nameInput
+            tryVerify(() => name.activeFocus, 2000)
+            compare(name.text, "Starred")
+            type("Renamed star")
+            keyClick(Qt.Key_Return)
+            verify(!ed.opened)
+            compare(bm.get(b.id).title, "Renamed star")
+            tryCompare(bar, "count", 1, 2000)
+            compare(barItem(0).title, "Renamed star")
+
+            // Another page: not bookmarked; back: bookmarked again.
+            browser.navigate(page("Unstarred"))
+            tryCompare(browser, "title", "Unstarred", 10000)
+            verify(!star.bookmarked)
+            // The title arrives before the load ends; going back while the
+            // page still loads can be dropped.
+            tryVerify(() => !view().loading && view().canGoBack, 10000)
+            browser.back()
+            tryCompare(browser, "title", "Starred", 10000)
+            verify(star.bookmarked)
+            // Another tab follows its own page.
+            browser.openTab(page("Other tab"))
+            tryCompare(browser, "title", "Other tab", 10000)
+            verify(!star.bookmarked)
+            browser.selectTab(0)
+            verify(star.bookmarked)
+
+            // Click on a bookmarked page: the editor; Remove deletes it.
+            click(star)
+            verify(ed.opened)
+            click(find(ed, "bookmarkEditorRemove"))
+            verify(!ed.opened)
+            verify(!star.bookmarked)
+            compare(bm.count, 0)
+        }
+
+        function test_03_editor_folder_and_cancel() {
+            reset("Folder pick")
+            const f = bm.addFolder("Picked", { folder: bm.otherFolder })
+            click(star)
+            const ed = star.editor
+            verify(ed.opened)
+            click(find(ed, "bookmarkEditorFolder"))
+            const list = find(ed, "bookmarkEditorFolderList")
+            tryVerify(() => list.visible && list.count === 3, 2000)
+            list.forceLayout()
+            const row = list.itemAtIndex(2)
+            compare(row.folderId, f)
+            click(row)
+            compare(ed.folder, f)
+            click(find(ed, "bookmarkEditorSave"))
+            verify(!ed.opened)
+            compare(bm.bookmarksFor(view().url)[0].parent, f)
+            // Cancel keeps it unchanged; Escape too.
+            click(star)
+            ed.name = "Not saved"
+            click(find(ed, "bookmarkEditorCancel"))
+            compare(bm.bookmarksFor(view().url)[0].title, "Folder pick")
+            click(star)
+            keyClick(Qt.Key_Escape)
+            verify(!ed.opened)
+            // Invalid URL: stays open with an error.
+            click(star)
+            ed.url = "   "
+            verify(!ed.accept())
+            verify(ed.opened)
+            verify(find(ed, "bookmarkEditorError").visible)
+            ed.cancel()
+            // A click outside saves.
+            click(star)
+            ed.name = "Outside"
+            mouseClick(root, 20, root.height - 40)
+            verify(!ed.opened)
+            compare(bm.bookmarksFor(view().url)[0].title, "Outside")
+        }
+
+        function test_04_ctrl_d() {
+            reset("Keyboard star")
+            const act = browser.actions.action("bookmark.toggle")
+            verify(act.enabled)
+            verify(!act.checked)
+            keyClick(Qt.Key_D, Qt.ControlModifier)
+            verify(star.bookmarked)
+            verify(act.checked)
+            verify(star.editor.opened, "shows the editor like a click")
+            keyClick(Qt.Key_Escape)
+            verify(!star.editor.opened)
+            tryVerify(() => view().activeFocus, 2000, "focus goes back to the page")
+            keyClick(Qt.Key_D, Qt.ControlModifier)
+            verify(!star.bookmarked, "Ctrl+D again removes it")
+            verify(!act.checked)
+            compare(bm.count, 0)
+            // Through the store alone (no button), e.g. in a custom layout.
+            browser.actions.bookmarkButton = null
+            try {
+                browser.trigger("bookmark.toggle")
+                verify(star.bookmarked)
+                verify(!star.editor.opened)
+                browser.trigger("bookmark.toggle")
+                verify(!star.bookmarked)
+            } finally {
+                browser.actions.bookmarkButton = Qt.binding(() => browser.navigationBar.bookmarkButton)
+            }
+        }
+
+        function test_05_bar_click_opens() {
+            reset("Bar start")
+            fill()
+            compare(barItem(0).title, "Bar one")
+            verify(barItem(2).isFolder)
+            verify(barItem(0).fits && barItem(2).fits)
+            verify(!find(bar, "bookmarkBarOverflow").visible)
+            click(barItem(0))
+            tryCompare(browser, "title", "Bar one", 10000)
+            compare(browser.tabs.count, 1)
+            // Ctrl+click and middle click: background tabs.
+            click(barItem(1), Qt.LeftButton, Qt.ControlModifier)
+            tryCompare(browser.tabs, "count", 2, 5000)
+            compare(browser.title, "Bar one", "opened in the background")
+            click(barItem(1), Qt.MiddleButton)
+            tryCompare(browser.tabs, "count", 3, 5000)
+            compare(browser.tabs.currentIndex, 0)
+            tryCompare(browser.tabs.views[1], "title", "Bar two", 10000)
+            // Added bookmarks appear, removed ones go.
+            bm.add(page("Bar three"), "Bar three")
+            tryCompare(bar, "count", 4, 2000)
+            compare(barItem(3).title, "Bar three")
+            waitForLayout(bar)
+            bm.remove(barItem(0).nodeId)
+            tryCompare(bar, "count", 3, 2000)
+            compare(barItem(0).title, "Bar two")
+        }
+
+        function test_06_folder_dropdown() {
+            reset("Dropdown start")
+            const ids = fill()
+            const menu = bar.menu
+            click(barItem(2))
+            verify(menu.opened)
+            compare(menu.folder, ids.folder)
+            const panel = menu.panelAt(0)
+            verify(panel)
+            verify(panel.y >= barItem(2).mapToItem(null, 0, 0).y + barItem(2).height - 1, "drops down below the item")
+            let r = menu.rowAt(0, 0)
+            compare(r.title, "Inside")
+            // A sub-folder opens a sub-menu.
+            click(menu.rowAt(0, 1))
+            compare(menu.levels.length, 2)
+            compare(menu.levels[1].folder, ids.sub)
+            r = menu.rowAt(1, 0)
+            compare(r.title, "Deep")
+            // Escape closes the sub-menu, then the menu.
+            keyClick(Qt.Key_Escape)
+            compare(menu.levels.length, 1)
+            keyClick(Qt.Key_Escape)
+            verify(!menu.opened)
+            // Click a bookmark in it: opens and closes the menu.
+            click(barItem(2))
+            click(menu.rowAt(0, 1))
+            click(menu.rowAt(1, 0))
+            verify(!menu.opened)
+            tryCompare(browser, "title", "Deep", 10000)
+            // A press outside closes it.
+            click(barItem(2))
+            verify(menu.opened)
+            mouseClick(root, root.width / 2, root.height - 60)
+            verify(!menu.opened)
+            // Middle click on the folder: its bookmarks in new tabs.
+            bm.add(page("Inside 2"), "Inside 2", { folder: ids.folder })
+            click(barItem(2), Qt.MiddleButton)
+            tryCompare(browser.tabs, "count", 3, 5000)
+            verify(!menu.opened)
+            // "Open all" in the menu.
+            click(barItem(2))
+            const all = find(menu.panelAt(0), "bookmarkMenuOpenAll")
+            tryVerify(() => all.visible, 2000)
+            click(all)
+            tryCompare(browser.tabs, "count", 5, 5000)
+        }
+
+        function test_07_overflow_chevron() {
+            reset("Overflow start")
+            for (let i = 0; i < 40; ++i) bm.add(page("Overflow " + i), "Overflowing bookmark " + i)
+            tryCompare(bar, "count", 40, 2000)
+            waitForLayout(bar)
+            const chevron = find(bar, "bookmarkBarOverflow")
+            tryVerify(() => chevron.visible, 2000)
+            verify(bar.visibleCount > 2 && bar.visibleCount < 40, "fits " + bar.visibleCount)
+            verify(bar.overflowing)
+            const lastShown = barItem(bar.visibleCount - 1)
+            verify(lastShown.x + lastShown.width <= chevron.mapToItem(lastShown.parent, 0, 0).x, "items end before »")
+            verify(!barItem(bar.visibleCount).fits)
+            compare(barItem(bar.visibleCount).opacity, 0)
+            click(chevron)
+            const menu = bar.menu
+            verify(menu.opened)
+            compare(menu.levels[0].startIndex, bar.visibleCount)
+            verify(!menu.rowAt(0, 0).shown, "items on the bar are not repeated")
+            const first = menu.rowAt(0, bar.visibleCount)
+            verify(first.shown)
+            compare(first.title, "Overflowing bookmark " + bar.visibleCount)
+            const want = "Overflow " + bar.visibleCount
+            click(first)
+            tryCompare(browser, "title", want, 10000)
+            // A wider window shows more.
+            const before = bar.visibleCount
+            bm.clear()
+            tryVerify(() => !chevron.visible, 2000)
+            compare(bar.visibleCount, 0)
+            verify(before > 0)
+        }
+
+        function test_08_context_menu() {
+            reset("Context start")
+            const ids = fill()
+            const ctx = bar.contextMenu
+            click(barItem(0), Qt.RightButton)
+            verify(ctx.opened)
+            compare(labels(ctx), ["Open", "Open in new tab", "-", "Edit…", "Delete", "-", "New folder…", "Bookmark manager"])
+            click(ctx.rowAt(ctx.indexOfLabel("Open in new tab")))
+            verify(!ctx.opened)
+            tryCompare(browser.tabs, "count", 2, 5000)
+            tryCompare(browser.tabs.views[1], "title", "Bar one", 10000)
+            // Edit…
+            click(barItem(1), Qt.RightButton)
+            click(ctx.rowAt(ctx.indexOfLabel("Edit…")))
+            verify(bar.editor.opened)
+            compare(bar.editor.nodeId, ids.two)
+            bar.editor.name = "Second"
+            keyClick(Qt.Key_Return)
+            compare(bm.get(ids.two).title, "Second")
+            // Delete
+            click(barItem(0), Qt.RightButton)
+            click(ctx.rowAt(ctx.indexOfLabel("Delete")))
+            tryCompare(bar, "count", 2, 2000)
+            verify(!bm.contains(ids.one))
+            // Folder entries; New folder… after it.
+            click(barItem(1), Qt.RightButton)
+            compare(labels(ctx)[0], "Open all (1) in tabs")
+            verify(labels(ctx).indexOf("Rename…") >= 0)
+            click(ctx.rowAt(ctx.indexOfLabel("New folder…")))
+            verify(bar.editor.opened)
+            compare(bar.editor.mode, "newFolder")
+            bar.editor.name = "Made here"
+            click(find(bar.editor, "bookmarkEditorSave"))
+            tryCompare(bar, "count", 3, 2000)
+            compare(barItem(2).title, "Made here")
+            verify(barItem(2).isFolder)
+            // In a folder's drop-down too.
+            click(barItem(1))
+            click(bar.menu.rowAt(0, 0), Qt.RightButton)
+            verify(ctx.opened)
+            verify(!bar.menu.opened)
+            compare(labels(ctx)[0], "Open")
+            ctx.close()
+            // Empty space: Bookmark manager / Hide.
+            mouseClick(root, bar.mapToItem(root, bar.width - 300, 0).x, bar.mapToItem(root, 0, bar.height / 2).y, Qt.RightButton)
+            verify(ctx.opened)
+            compare(labels(ctx), ["New folder…", "Bookmark manager", "-", "Hide bookmarks bar"])
+            click(ctx.rowAt(ctx.indexOfLabel("Bookmark manager")))
+            tryVerify(() => browser.bookmarkManagerVisible, 2000)
+            browser.hideBookmarks()
+            mouseClick(root, bar.mapToItem(root, bar.width - 300, 0).x, bar.mapToItem(root, 0, bar.height / 2).y, Qt.RightButton)
+            click(ctx.rowAt(ctx.indexOfLabel("Hide bookmarks bar")))
+            verify(!browser.showBookmarksBar)
+            verify(!bar.visible)
+        }
+
+        function test_09_show_bar_action() {
+            reset("Show bar")
+            const act = browser.actions.action("bookmarks.showBar")
+            verify(act.checkable)
+            verify(act.checked)
+            const contentTop = () => browser.tabs.mapToItem(root, 0, 0).y
+            const shownTop = contentTop()
+            keyClick(Qt.Key_B, Qt.ControlModifier | Qt.ShiftModifier)
+            verify(!browser.showBookmarksBar)
+            verify(!act.checked)
+            verify(!bar.visible)
+            tryVerify(() => contentTop() < shownTop, 2000, "the page moves up")
+            keyClick(Qt.Key_B, Qt.ControlModifier | Qt.ShiftModifier)
+            verify(browser.showBookmarksBar)
+            verify(act.checked)
+            // The checked state follows the property.
+            browser.showBookmarksBar = false
+            verify(!act.checked)
+            browser.trigger("bookmarks.showBar", { show: true })
+            verify(browser.showBookmarksBar)
+            verify(act.checked)
+        }
+
+        function test_10_drag_to_reorder() {
+            reset("Drag start")
+            const ids = fill()
+            const a = barItem(0), b = barItem(1)
+            const from = center(a)
+            const to = b.mapToItem(root, b.width - 4, b.height / 2)
+            mousePress(root, from.x, from.y)
+            for (let i = 1; i <= 10; ++i)
+                mouseMove(root, from.x + (to.x - from.x) * i / 10, from.y)
+            verify(bar.dropIndex === 2, "drop slot " + bar.dropIndex)
+            mouseRelease(root, to.x, to.y)
+            compare(bm.children(bm.barFolder).map(n => n.title), ["Bar two", "Bar one", "Folder"])
+            compare(browser.title, "Drag start", "a drag does not open the bookmark")
+            // Onto a folder: moves it in.
+            const f = barItem(2)
+            const p = center(barItem(0))
+            const q = center(f)
+            mousePress(root, p.x, p.y)
+            for (let i = 1; i <= 10; ++i)
+                mouseMove(root, p.x + (q.x - p.x) * i / 10, p.y)
+            compare(bar.dropFolder, ids.folder)
+            mouseRelease(root, q.x, q.y)
+            compare(bm.get(ids.two).parent, ids.folder)
+            tryCompare(bar, "count", 2, 2000)
+        }
+
+        function test_11_suggestions_include_bookmarks() {
+            reset("Suggest start")
+            const sug = browser.addressSuggestions
+            const url = page("Zebra page")
+            bm.add(url, "Zebra bookmark")
+            browser.historyStore.recordVisit(page("Zebra history"), { title: "Zebra history" })
+            browser.historyStore.recordVisit(url, { title: "Zebra page" })
+            keyClick(Qt.Key_L, Qt.ControlModifier)
+            const field = find(browser, "addressInput")
+            tryVerify(() => field.activeFocus, 2000)
+            type("zebra")
+            tryVerify(() => sug.visible, 2000)
+            compare(sug.items.map(i => i.type), ["search", "bookmark", "history"],
+                    "bookmarks rank above history; a URL shows once")
+            compare(sug.items[1].title, "Zebra bookmark")
+            const row = sug.rowAt(1)
+            verify(row)
+            keyClick(Qt.Key_Down)
+            keyClick(Qt.Key_Return)
+            tryCompare(browser, "title", "Zebra page", 10000)
+            // Without a store: no bookmark entries.
+            sug.bookmarkStore = null
+            try {
+                keyClick(Qt.Key_L, Qt.ControlModifier)
+                type("zebra")
+                tryVerify(() => sug.visible, 2000)
+                verify(sug.items.every(i => i.type !== "bookmark"))
+                keyClick(Qt.Key_Escape)
+                keyClick(Qt.Key_Escape)
+            } finally {
+                sug.bookmarkStore = Qt.binding(() => browser.bookmarkStore)
+            }
+        }
+
+        function test_12_manager() {
+            reset("Manager start")
+            const ids = fill()
+            const act = browser.actions.action("bookmarks.manage")
+            keyClick(Qt.Key_O, Qt.ControlModifier | Qt.ShiftModifier)
+            tryVerify(() => browser.bookmarkManagerVisible, 2000)
+            verify(act.checked)
+            const search = find(mgr, "bookmarkManagerSearch")
+            tryVerify(() => search.activeFocus, 2000)
+            compare(mgr.currentFolder, bm.barFolder)
+            compare(mgr.count, 3)
+            // Folder tree: bar, Folder, Sub, other.
+            const tree = find(mgr, "bookmarkFolderList")
+            compare(tree.count, 4)
+            click(mgr.folderRowAt(1))
+            compare(mgr.currentFolder, ids.folder)
+            compare(mgr.count, 2)
+            // Double click on a folder shows it; Backspace goes up.
+            mouseDoubleClickSequence(root, center(mgr.rowAt(1)).x, center(mgr.rowAt(1)).y)
+            compare(mgr.currentFolder, ids.sub)
+            keyClick(Qt.Key_Backspace)
+            compare(mgr.currentFolder, ids.folder)
+            compare(mgr.currentIndex, 1, "selects the folder it came from")
+            click(find(mgr, "bookmarkUp"))
+            compare(mgr.currentFolder, bm.barFolder)
+
+            // Search covers every folder; Enter opens and closes the manager.
+            search.forceActiveFocus()
+            type("deep")
+            compare(mgr.count, 1)
+            compare(mgr.entryAt(0).title, "Deep")
+            keyClick(Qt.Key_Return)
+            tryCompare(browser, "title", "Deep", 10000)
+            verify(!browser.bookmarkManagerVisible)
+            browser.showBookmarks()
+            compare(mgr.filterText, "deep")
+            keyClick(Qt.Key_Escape)
+            compare(mgr.filterText, "", "Escape clears the search first")
+            compare(mgr.count, 3)
+
+            // Edit (✎) and remove (×).
+            click(find(mgr.rowAt(0), "bookmarkEdit"))
+            verify(mgr.editor.opened)
+            compare(mgr.editor.nodeId, ids.one)
+            mgr.editor.name = "First"
+            keyClick(Qt.Key_Return)
+            compare(bm.get(ids.one).title, "First")
+            tryVerify(() => search.activeFocus, 2000, "focus back in the manager")
+            click(find(mgr.rowAt(1), "bookmarkRemove"))
+            verify(!bm.contains(ids.two))
+            compare(mgr.count, 2)
+            // Keys: select, Ctrl+Down moves, Delete removes.
+            mgr.currentIndex = 0
+            keyClick(Qt.Key_Down, Qt.ControlModifier)
+            compare(bm.children(bm.barFolder).map(n => n.title), ["Folder", "First"])
+            compare(mgr.currentIndex, 1)
+            keyClick(Qt.Key_Delete)
+            compare(bm.children(bm.barFolder).map(n => n.title), ["Folder"])
+            // Middle click: a background tab; Ctrl+click on a folder: all of it.
+            click(mgr.rowAt(0), Qt.LeftButton, Qt.ControlModifier)
+            tryCompare(browser.tabs, "count", 2, 5000)
+            verify(browser.bookmarkManagerVisible)
+
+            // New folder.
+            click(find(mgr, "bookmarkNewFolder"))
+            verify(mgr.editor.opened)
+            compare(mgr.editor.mode, "newFolder")
+            mgr.editor.name = "Created"
+            keyClick(Qt.Key_Return)
+            compare(bm.children(bm.barFolder).map(n => n.title), ["Folder", "Created"])
+
+            // Export, clear, import.
+            const dir = Cef.environment("CEF_QML_TEST_DIR")
+            click(find(mgr, "bookmarkImportExport"))
+            const path = find(mgr, "bookmarkFilePath")
+            // (The Column moves it below the title at its next polish.)
+            tryVerify(() => path.visible && path.mapToItem(mgr, 0, 0).y > 40, 2000)
+            compare(path.text, "~/bookmarks.html")
+            mgr.filePath = dir + "/manager.html"
+            click(find(mgr, "bookmarkExportHtml"))
+            verify(mgr.status.indexOf("Exported 2 bookmarks") === 0, mgr.status)
+            click(find(mgr, "bookmarkExportJson"))
+            verify(mgr.status.indexOf("manager.json") > 0, mgr.status)
+            bm.clear()
+            compare(mgr.count, 0)
+            verify(find(mgr, "bookmarkEmpty").visible)
+            click(find(mgr, "bookmarkImport"))
+            compare(mgr.status, "Imported 2 bookmarks and 3 folders")
+            compare(mgr.count, 2)
+            mgr.filePath = dir + "/nothing-here.html"
+            click(find(mgr, "bookmarkImport"))
+            verify(mgr.status.indexOf("Import failed") === 0, mgr.status)
+
+            // Close button, and the action toggles.
+            const cb = find(mgr, "bookmarkManagerClose")
+            click(cb)
+            verify(!browser.bookmarkManagerVisible)
+            browser.trigger("bookmarks.manage")
+            verify(browser.bookmarkManagerVisible)
+            browser.trigger("bookmarks.manage")
+            verify(!browser.bookmarkManagerVisible)
+        }
+
+        function test_13_custom_layout_bar() {
+            browser.showBookmarksBar = false
+            plainBar.visible = true
+            store.clear()
+            try {
+                const a = store.add(page("Plain"), "Plain")
+                tryCompare(plainBar, "count", 1, 2000)
+                waitForRendering(plainBar)
+                verify(find(plainBar, "bookmarkBarEmpty").visible === false)
+                plainBar.opened = []
+                click(plainBar.itemAt(0), Qt.MiddleButton)
+                compare(plainBar.opened, [[store.get(a).url, true]])
+            } finally {
+                plainBar.visible = false
+                browser.showBookmarksBar = true
+                store.clear()
+            }
+        }
+
+        function cleanupTestCase() {
+            closePopups()
+            // Other suites share the profile (bookmarks.json, history.json).
+            bm.clear()
+            bm.save()
+            browser.historyStore.clear()
+            browser.historyStore.save()
+            store.clear()
+            store.save()
+        }
+    }
 }

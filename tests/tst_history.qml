@@ -581,7 +581,7 @@ Item {
                 sug.removeProvider(bookmarks)
                 sug.removeProvider(later)
             }
-            compare(sug.providers.length, 3)
+            compare(sug.providers.length, 4)
         }
 
         function test_07_shift_delete_removes_history() {

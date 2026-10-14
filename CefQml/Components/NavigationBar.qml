@@ -10,6 +10,10 @@ Rectangle {
     property alias searchUrl: address.searchUrl
     // Optional KeyBindings: adds the keys to the buttons' tool tips.
     property var keyBindings: null
+    // Optional BookmarkStore: shows a BookmarkButton (star) after the
+    // address field.
+    property BookmarkStore bookmarkStore: null
+    property alias bookmarkButton: star
     // Extra items placed after the address field (e.g. a menu button).
     default property alias trailing: trailingRow.data
 
@@ -55,9 +59,20 @@ Rectangle {
         view: bar.view
         anchors.left: leading.right
         anchors.leftMargin: 6
-        anchors.right: zoom.left
+        anchors.right: star.left
         anchors.rightMargin: 6
         anchors.verticalCenter: parent.verticalCenter
+    }
+
+    BookmarkButton {
+        id: star
+        anchors.right: zoom.left
+        anchors.verticalCenter: parent.verticalCenter
+        store: bar.bookmarkStore
+        view: bar.view
+        visible: store !== null
+        width: visible ? implicitWidth : 0
+        toolTip: bar._tip(bookmarked ? "Edit bookmark" : "Bookmark this page", "bookmark.toggle")
     }
 
     IconButton {

@@ -446,6 +446,75 @@ set between JavaScript and `QVariant` on every change. The file is still
 plain JSON (`{ "version": 1, "entries": [...] }`). Like `JsonStore`, use one
 store per file: several `Browser` windows should share one `historyStore`.
 
+### `BookmarkStore` and `BookmarkModel`
+
+Bookmarks: a tree of folders and bookmarks persisted as JSON under
+`Cef.dataDir`. Two built-in folders, `"bar"` ("Bookmarks bar", where new
+bookmarks go by default) and `"other"` ("Other bookmarks"), sit under the
+hidden root `"root"`; they cannot be removed, moved or renamed. Every node
+has an `id` (a string), `title`, `dateAdded` / `dateModified` (ms since the
+epoch), `parent` (folder id) and `position` (index in the folder);
+bookmarks also have `url` and `icon`. The `Browser` creates one by default
+(`browser.bookmarkStore`); no view needs to be attached.
+
+```qml
+BookmarkStore { id: bookmarks }                       // Cef.dataDir/bookmarks.json
+// bookmarks.toggle(view.url, view.title)             -> true (now bookmarked)
+// const f = bookmarks.addFolder("News", { folder: bookmarks.barFolder })
+// const id = bookmarks.add("https://lwn.net/", "LWN", { folder: f, index: 0 })
+// bookmarks.move(id, "other", 0); bookmarks.update(id, { title: "LWN.net" })
+// bookmarks.search("lwn", 5)  -> [{ id, title, url, icon, parent, path: ["Other bookmarks"], score, ... }]
+// bookmarks.exportFile("~/bookmarks.html"); bookmarks.importFile("~/Downloads/bookmarks.html")
+
+// A folder as a list model (any view; rows update one by one):
+ListView {
+    model: BookmarkModel { store: bookmarks; folder: bookmarks.barFolder }
+    delegate: Text { text: (isFolder ? "📁 " : "") + title }
+}
+// Bindings that call functions re-evaluate through `revision`:
+// starred: (bookmarks.revision, bookmarks.isBookmarked(view.url))
+```
+
+| Member | Description |
+|---|---|
+| `path`, `filePath`, `loaded`, `errorString` | As for `HistoryStore` (default `"bookmarks.json"`; `""` keeps bookmarks in memory). Written atomically `saveDelay` ms (default 500) after the last change, at destruction and at application quit. |
+| `count`, `folderCount`, `revision` | Bookmarks / user folders; `revision` increments on every change. |
+| `rootFolder`, `barFolder`, `otherFolder`, `defaultFolder` | `"root"`, `"bar"`, `"other"`; where `add()` / `toggle()` put bookmarks without a `folder` option (default `"bar"`). |
+| `add(url, title, { folder, index, icon, dateAdded })` | Adds a bookmark (`index`: position, default the end); returns its id, or `""` for an invalid URL or folder. |
+| `addFolder(title, { folder, index })` | Adds a folder; returns its id. |
+| `remove(id)`, `update(id, { title, url, icon })`, `move(id, folder, index)` | `remove` takes a folder's contents with it; `move`'s `index` is the position afterwards (-1: the end); folders cannot move into themselves. |
+| `isBookmarked(url)`, `bookmarksFor(url)`, `toggle(url, title, opts)` | A URL can be bookmarked in several folders; `toggle` adds one (opts as for `add`) or removes all, and returns whether the URL is bookmarked afterwards. URLs compare in their encoded form (`normalizeUrl(url)`). |
+| `setIcon(url, icon)` | Sets the icon of every bookmark of the URL (e.g. from `view.icon`). |
+| `search(text, limit, folder)` | Bookmarks whose title or URL contain every word of `text`, best first (title and host prefixes and word starts rank higher); empty text: the newest. `folder` limits it to a subtree. |
+| `get(id)`, `children(folder)`, `contains(id)`, `isFolder(id)`, `isAncestor(a, id)` | Lookup. `get` returns `{ id, type ("folder"/"bookmark"), isFolder, title, url, icon, dateAdded, dateModified, parent, position, childCount, path }` (`path`: titles of the folders above it) or `undefined`. |
+| `folders(folder)`, `urls(folder)` | All folders below `folder` (default: both built-in ones) depth first with a `depth`; all bookmark URLs below a folder (for "open all in tabs"). |
+| `clear()` | Removes everything but the built-in folders. |
+| `exportHtml(folder)`, `exportJson(folder)` | The Netscape bookmark file every browser imports, or JSON (`{ version, roots: [...] }`); the whole tree or one folder. |
+| `importHtml(html, { folder, replace })`, `importJson(json, opts)` | Import a Netscape file, this store's JSON or Chrome's `Bookmarks` file. By default the file's toolbar folder goes into the bookmarks bar and the rest into "Other bookmarks"; `folder` puts everything into one folder, `replace` clears first. Existing bookmarks (same URL in the same folder) are skipped and same-named folders merged, so importing twice adds nothing. Returns `{ ok, bookmarks, folders, skipped, error }`. |
+| `importFile(file, opts)`, `exportFile(file, format, folder)` | The same with a file (path, `~/...` or `file:` URL); the format is JSON when the file starts with `{` / the extension is `.json`, else HTML. |
+| `save()`, `reload()` | Write now; read the file again. |
+| signals `added(id)`, `removed(id, parentId, index)`, `moved(id, oldParent, oldIndex, newParent, newIndex)`, `updated(id)`, `imported(bookmarks, folders)`, `changed()`, `saved()` | `changed()` follows every operation (once for imports, `clear()` and `reload()`). |
+
+`BookmarkModel` is a folder as a list model: `store`, `folder`,
+`recursive` (the whole subtree, depth first, e.g. a folder tree with
+`foldersOnly`), `filterText` (bookmarks of the subtree matching every word,
+flat), `count`, `get(row)`, `indexOf(id)`. Roles: `nodeId` (`id` is
+reserved in QML delegates), `type`, `isFolder`, `title`, `url`, `icon`,
+`dateAdded`, `dateModified`, `parentId`, `position`, `childCount`, `depth`,
+`path`. Rows are inserted, removed and moved one by one, so views keep
+their delegates and scroll position.
+
+Why C++ instead of a `JsonStore`: `isBookmarked(url)` runs in bindings on
+every navigation of every tab and the address bar searches bookmarks on
+every keystroke; bars, menus and the manager want per-folder models that
+update row by row; tree operations (moves between folders, cycle checks,
+merging imports) and parsing Netscape HTML are easier to get right and fast
+over a node tree with an id map, a URL hash and cached lowercase strings
+than over a JSON document converted between JavaScript and `QVariant` on
+every change. The file is still plain JSON (`{ "version": 1, "roots": [...]
+}`), written atomically and debounced like `JsonStore`'s. Use one store per
+file: several `Browser` windows should share one `bookmarkStore`.
+
 ### `HotReload` (Item)
 
 Loads a QML file and reloads it whenever QML/JS files under its directory (or
@@ -477,19 +546,21 @@ through `Style`, or copy one as the starting point for your own.
 
 | Component | Purpose and key API |
 |---|---|
-| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts), `userScriptManager` (the `UserScriptManager` overlay), `userScriptManagerVisible`, `offerUserScriptInstall` (default true), `historyStore` (a `HistoryStore` on `history.json`; null disables history), `addressSuggestions` (the address bar's `AddressSuggestions`), `historyView` (the `HistoryView` overlay), `historyVisible`. Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`, `showUserScripts()`, `hideUserScripts()`, `showHistory()`, `hideHistory()`, `reviewUserScript(url)`, `isUserScriptUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
+| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts), `userScriptManager` (the `UserScriptManager` overlay), `userScriptManagerVisible`, `offerUserScriptInstall` (default true), `historyStore` (a `HistoryStore` on `history.json`; null disables history), `addressSuggestions` (the address bar's `AddressSuggestions`), `historyView` (the `HistoryView` overlay), `historyVisible`, `bookmarkStore` (a `BookmarkStore` on `bookmarks.json`; null disables bookmarks), `showBookmarksBar`, `bookmarksBar`, `bookmarkManager` (the `BookmarkManager` overlay), `bookmarkManagerVisible`. Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`, `showUserScripts()`, `hideUserScripts()`, `showHistory()`, `hideHistory()`, `showBookmarks()`, `hideBookmarks()`, `openBookmark(url, newTab)`, `reviewUserScript(url)`, `isUserScriptUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
 | `BrowserController` | Non-visual programmatic API over a `WebTabs` (`tabs`): navigation that reports its result, tab helpers, zoom, recently closed tabs. See below. |
 | `BrowserAction` | A named command: `name` (`"tab.new"`), `text`, `description`, `category`, `enabled`, `checkable`/`checked`, `defaultShortcuts`, signal `triggered(args)`, `trigger(args)`. |
 | `ActionRegistry` | A set of `BrowserAction`s looked up and run by name: `model` (for menus or a command palette), `count`, `action(name)`, `has(name)`, `names()`, `trigger(name, args)`, `add(action or { name, text, defaultShortcuts, onTriggered })`, `remove(nameOrAction)`, signal `actionTriggered(name, args)`. |
-| `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar`, `window`, `userScriptManager` and `historyView` (anything with `toggle()` and `visible`, e.g. a `PanelOverlay`) they act on. |
+| `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar`, `window`, `userScriptManager`, `historyView` and `bookmarkManager` (anything with `toggle()` and `visible`, e.g. a `PanelOverlay`), `bookmarkStore`, `bookmarkButton` and `bookmarksBarTarget` / `bookmarksBarProperty` (the object and boolean property `bookmarks.showBar` toggles; default property `"visible"`) they act on. |
 | `KeyBindings` | Window-wide keyboard shortcuts for an `ActionRegistry` (`actions`): defaults from the actions, `bindings` overrides, conflict resolution, modes. See below. |
 | `UserScriptStore` | Installed userscripts and their GM values, persisted under `Cef.dataDir`, injected into attached views. See [Userscripts](#userscripts). |
 | `UserScriptManager` | Manager UI for a `UserScriptStore` (`store`), with `view` for "running on this page". See [Managing scripts](#managing-scripts). |
 | `HistoryView` | Searchable history page for a `HistoryStore` (`store`), grouped by day. See [History page](#history-page). |
+| `BookmarkStore`, `BookmarkModel` | The bookmark tree and per-folder models (C++, `CefQml`). See [`BookmarkStore` and `BookmarkModel`](#bookmarkstore-and-bookmarkmodel). |
+| `BookmarkButton`, `BookmarksBar`, `BookmarkMenu`, `BookmarkEditor`, `BookmarkManager` | The star, the bookmarks bar, folder drop-downs, the edit card and the manager page. See [Bookmarks](#bookmarks). |
 | `PanelOverlay` | Modal panel host: dims the window, centres its content, closes on a backdrop click or Escape. See [History page](#history-page). |
 | `WebTabs` | Non-visual tab manager: one `CefWebView` per tab, stacked, only the current one visible. `views`, `count`, `currentIndex`, `currentView`, `homeUrl`, `viewDelegate` (a `Component` deriving from `CefWebView`), `openPopupsInNewTabs`, `closeOnRequest`, `userScriptStore` (a `UserScriptStore` injected into every tab), `historyStore` (a `HistoryStore` recording every tab's visits). `openTab(url, background, index)`, `closeTab(index)`, `moveTab(from, to)`, `closeAll()`, `indexOf(view)`, `urls()` / `restore(urls, current)` for sessions. Signals `tabOpened`, `tabClosed(view, index)`, `lastTabClosed`, `sessionChanged`, `contextMenuRequested(view, ...)`; set `interceptJavaScriptDialogs` / `interceptPermissions` / `interceptFileDialogs` / `interceptDownloads` to receive every tab's requests as `javaScriptDialogRequested(view, dialog)`, `permissionRequested(view, request)`, `fileDialogRequested(view, request)`, `downloadRequested(view, download)`. |
 | `TabStrip` | Horizontal tab bar for a `WebTabs` (`tabs`, required): click selects, middle click or × closes, + emits `newTabRequested()`. `maxTabWidth`, `minTabWidth`. |
-| `NavigationBar` | Back / forward / reload-stop, an `AddressField` and a load-progress line for `view`. `addressField`, `searchUrl`; children are placed after the address field (e.g. a menu button). |
+| `NavigationBar` | Back / forward / reload-stop, an `AddressField`, a bookmark star (when `bookmarkStore` is set) and a load-progress line for `view`. `addressField`, `searchUrl`, `bookmarkStore`, `bookmarkButton`; children are placed after the address field (e.g. a menu button). |
 | `AddressField` | URL/search field bound to `view`: shows the page URL while not edited; Enter navigates, non-addresses are searched with `searchUrl` (`%s` = query); Escape restores the page URL, a second Escape (or one with nothing edited) returns focus to the page. `text`, `input`, `isInternalUrl` (urls shown as an empty field), `suggestions` (set by `AddressSuggestions`), `urlFor(text)`, `go(url)` (load in `view` and focus it; the same URL reloads), `focusAndSelect()`, signal `navigated(url)`. |
 | `AddressSuggestions` | Drop-down and inline autocompletion for an `AddressField` from open tabs, a `HistoryStore` and your own providers. See [Address bar suggestions](#address-bar-suggestions). |
 | `FindBar` | Find-in-page bar for `view`: Enter next, Shift+Enter previous, Escape closes. `text`, `matchCount`, `activeMatch`, `matchCase`, `open()`, `close()`, `findNext(forward)`, signal `closeRequested()`. |
@@ -506,11 +577,12 @@ through `Style`, or copy one as the starting point for your own.
 ### Address bar suggestions
 
 `AddressSuggestions` turns an `AddressField` into an omnibox. `Browser` sets
-one up (`browser.addressSuggestions`) with its `historyStore` and tabs:
+one up (`browser.addressSuggestions`) with its `historyStore`, `bookmarkStore` and tabs:
 
 - While typing, a popup lists what Enter does with the text first (the
   inline completion, the typed URL or a search), then open tabs ("Switch to
-  tab"), history matches (ranked by `HistoryStore.search()`) and a
+  tab"), bookmarks (marked with a ★ next to the icon, at most
+  `maxBookmarks`, ranked by `BookmarkStore.search()`), history matches (ranked by `HistoryStore.search()`) and a
   "search for ..." entry, without duplicate URLs.
 - **Inline autocompletion**: typing at the end of the text appends the best
   history host (`exa` -> `exa|mple.com/`, the completed part selected) or,
@@ -528,7 +600,7 @@ one up (`browser.addressSuggestions`) with its `historyStore` and tabs:
 
 Sources are **providers**: a function `(text, ctx) => items` or an object
 `{ suggest(text, ctx), remove(item) }`, returning an array or a Promise of
-one. `ctx` is `{ text, view, tabs, historyStore, limit }`. An item is
+one. `ctx` is `{ text, view, tabs, historyStore, bookmarkStore, limit }`. An item is
 `{ type, title, url, icon, subtitle, action, remove }`: `type` picks the
 glyph (`"url"`, `"search"`, `"history"`, `"tab"`, `"bookmark"`, anything
 else), `action(item, newTab)` replaces navigating to `url`, and `remove(item)`
@@ -538,11 +610,11 @@ else), `action(item, newTab)` replaces navigating to `url`, and `remove(item)`
 Browser {
     id: browser
     Component.onCompleted: {
-        // Bookmarks before history:
+        // Entries of your own before history (tab, bookmark, history, search):
         addressSuggestions.addProvider({
-            suggest: text => myBookmarks.filter(b => b.title.toLowerCase().includes(text.toLowerCase()))
-                                        .map(b => ({ type: "bookmark", title: b.title, url: b.url })),
-        }, 1)
+            suggest: text => myLinks.filter(b => b.title.toLowerCase().includes(text.toLowerCase()))
+                                    .map(b => ({ type: "link", title: b.title, url: b.url })),
+        }, 2)
         // A command:
         addressSuggestions.addProvider(text => text === "history"
             ? [{ type: "command", title: "Show history", action: () => browser.trigger("history.show") }] : [])
@@ -552,9 +624,10 @@ Browser {
 
 | Member | Description |
 |---|---|
-| `addressField`, `historyStore`, `tabs` | The field (required), the history and the `WebTabs` to suggest from. |
-| `providers` | The provider list; default `[tabProvider, historyProvider, searchProvider]` (the built-ins are properties too). `addProvider(provider, index)`, `removeProvider(provider)`. |
+| `addressField`, `historyStore`, `bookmarkStore`, `tabs` | The field (required), the history, the bookmarks and the `WebTabs` to suggest from. |
+| `providers` | The provider list; default `[tabProvider, bookmarkProvider, historyProvider, searchProvider]` (the built-ins are properties too). `addProvider(provider, index)`, `removeProvider(provider)`. |
 | `maxItems`, `rowHeight` | Popup size (default 8 entries of 32 px). |
+| `maxBookmarks` | At most this many bookmarks (default 3). |
 | `inlineCompletion`, `completer` | Inline autocompletion on/off; `completer(text)` returns `{ text, url }` (default `historyStore.inlineCompletion`). |
 | `navigate(url, newTab)`, `selectTab(view)` | How entries are opened (functions, replaceable; `Browser` routes them through its controller). |
 | `items`, `currentIndex`, `userText`, `completion`, `opened` | State (`userText`: the text without the completion). |
@@ -619,6 +692,105 @@ fit; `topMargin`, `sideMargin`) over a `backdropColor` backdrop.
 `close()` gives focus to `returnFocusTo`, `toggle()`; `available: false`
 keeps it closed; `closeOnBackdropClick`, `closeOnEscape` (Escape the content
 does not handle); `contentItem`, `panelItem`; signals `opened()`, `closed()`.
+
+### Bookmarks
+
+`Browser` puts the pieces together around its `bookmarkStore`: a star in
+the navigation bar, the bookmarks bar under it (`showBookmarksBar`,
+Ctrl+Shift+B), the bookmark manager overlay (Ctrl+Shift+O) and bookmark
+suggestions in the address bar. Each piece is a component of its own:
+
+- **`BookmarkButton`** (the star, an `IconButton`): ★ in the accent colour
+  when `view`'s URL is bookmarked in `store`, ☆ otherwise. A click bookmarks
+  the page and opens a small editor (name, folder, Remove, Done); on a
+  bookmarked page it opens the bookmark's editor (`editOnClick: false`:
+  removes it). `toggle()` adds / removes without the click semantics
+  (`bookmark.toggle`, Ctrl+D, uses it); `activate()` is the click;
+  `showEditorOnAdd`, `bookmarked`, `editor`. It keeps the bookmark's icon in
+  step with the page's favicon. `NavigationBar` shows one (`bookmarkButton`)
+  when its `bookmarkStore` is set.
+- **`BookmarksBar`**: the bookmarks of `folder` (default the store's
+  "Bookmarks bar") as a strip. Click opens (`openRequested(url, false)`),
+  middle click or Ctrl+click opens in a new tab (`newTab` true); folders open
+  drop-down menus with sub-menus and "Open all in tabs"; what does not fit
+  goes into the » menu; items can be dragged to reorder them or onto a
+  folder (`dragEnabled`); right click offers Open, Open in new tab, Edit…,
+  Delete, New folder…, Bookmark manager (`manageRequested()`) and, on empty
+  space, Hide bookmarks bar (`hideRequested()`). `showOtherFolder` adds an
+  "Other bookmarks" button at the right. `count`, `visibleCount`,
+  `overflowing`, `itemAt(i)`, `indexOf(id)`, `activate(i, newTab)`,
+  `openFolder(i)`, `openOverflow()`, `showContextMenu(id, x, y)`, `menu`,
+  `editor`, `contextMenu`.
+- **`BookmarkMenu`**: the folder drop-down on its own, for a "bookmarks"
+  menu button: `popup(folder, item, x, y)`, `close()`, `openAll(folder)`,
+  signals `openRequested(url, newTab)`, `contextMenuRequested(id, x, y)`,
+  `closed()`.
+- **`BookmarkEditor`**: the edit card: `edit(id, anchorItem, { added })`,
+  `newFolder(parentId, index, anchorItem)`, `accept()`, `cancel()`,
+  `remove()`, `showUrl`, signal `finished(id, removed)`. Enter or a click
+  outside saves, Escape cancels.
+- **`BookmarkManager`**: the manager page: folder tree on the left, the
+  folder's contents (or search results over all bookmarks) on the right,
+  ✎ edit, × delete, "New folder", ↑ parent, and "Import / export" of
+  Netscape HTML or JSON files (`filePath`, `importFile()`,
+  `exportFile("html" | "json")`). Click selects, double click or Enter
+  opens (a folder: shows it), middle click / Ctrl+click / Ctrl+Enter opens in
+  a new tab (a folder: all its bookmarks); in the search field Up/Down
+  select, Ctrl+Up/Down move the selected item, F2 edits, Shift+Delete (or
+  Delete with an empty search) removes, Backspace with an empty search goes
+  up, Escape clears the search, then closes. `store`, `currentFolder`,
+  `filterText`, `currentIndex`, `count`, `model`, `folderModel`, `status`,
+  `title`, `closable`, `selectFolder(id)`, `open(row, newTab)`,
+  `remove(row)`, `edit(row)`, `newFolder()`, `moveBy(row, delta)`,
+  `entryAt(row)`, `rowAt(row)`, `folderRowAt(row)`, `focusDefault()`,
+  signals `openRequested(url, newTab)`, `closeRequested()`.
+
+The menus and editors are drawn in the window's content item above
+everything else, so they work wherever the bar or button sits. A layout of
+your own:
+
+```qml
+BookmarkStore { id: bookmarks }
+Column {
+    anchors.fill: parent
+    NavigationBar { id: nav; width: parent.width; view: tabs.currentView; bookmarkStore: bookmarks }
+    BookmarksBar {
+        id: bar
+        width: parent.width
+        store: bookmarks
+        onOpenRequested: (url, newTab) => newTab ? tabs.openTab(url, true) : tabs.currentView.url = url
+        onManageRequested: managerOverlay.open()
+        onHideRequested: visible = false
+    }
+    WebTabs { id: tabs; width: parent.width; height: parent.height - y }
+}
+PanelOverlay {
+    id: managerOverlay
+    anchors.fill: parent
+    BookmarkManager {
+        anchors.fill: parent
+        store: bookmarks
+        onOpenRequested: (url, newTab) => {
+            if (newTab) tabs.openTab(url, true)
+            else { managerOverlay.close(); tabs.currentView.url = url }
+        }
+        onCloseRequested: managerOverlay.close()
+    }
+}
+BrowserActions {          // Ctrl+D, Ctrl+Shift+B, Ctrl+Shift+O
+    bookmarkStore: bookmarks
+    bookmarkButton: nav.bookmarkButton
+    bookmarkManager: managerOverlay
+    bookmarksBarTarget: bar         // its `visible` (bookmarksBarProperty) is toggled
+    // ...
+}
+```
+
+In `Browser`: `bookmarkStore` (null disables bookmarks: no star, bar,
+manager or suggestions), `showBookmarksBar` (default true), `bookmarksBar`,
+`bookmarkManager`, `bookmarkManagerVisible`, `showBookmarks()`,
+`hideBookmarks()` and `openBookmark(url, newTab)` (in the current tab, or a
+background tab next to it, as the bar and manager do).
 
 ### Userscripts
 
@@ -799,6 +971,9 @@ and the same pieces work in a layout of your own.
 | `window.fullscreen` | F11 | `checked` reflects the window state |
 | `userscripts.manage` | Ctrl+Shift+U | shows / hides the userscript manager; `checked` while shown |
 | `history.show` | Ctrl+H | shows / hides the history page; `checked` while shown |
+| `bookmark.toggle` | Ctrl+D | bookmarks the page (with `bookmarkButton`: and opens its editor) or removes its bookmarks; `checked` while bookmarked |
+| `bookmarks.showBar` | Ctrl+Shift+B | checkable: shows / hides the bookmarks bar; `{ show }` sets it |
+| `bookmarks.manage` | Ctrl+Shift+O | shows / hides the bookmark manager; `checked` while shown |
 
 Every action has a human-readable `text`, and `enabled` follows the state
 (e.g. `nav.back` only with history). Disabled actions do not run, and their

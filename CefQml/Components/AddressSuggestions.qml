@@ -7,6 +7,7 @@ import CefQml
 //       parent: window.contentItem          // any item the popup can cover
 //       addressField: navBar.addressField
 //       historyStore: history
+//       bookmarkStore: bookmarks            // optional
 //       tabs: webTabs
 //   }
 //
@@ -24,16 +25,24 @@ import CefQml
 //
 // Providers are functions `(text, ctx) => items` or objects
 // `{ suggest(text, ctx), remove(item) }`; `items` is an array or a Promise
-// of one. ctx: { text, view, tabs, historyStore, limit }. An item is
+// of one. ctx: { text, view, tabs, historyStore, bookmarkStore, limit }. An item is
 // { type, title, url, icon, subtitle, action, remove }: `action(item,
 // newTab)` replaces navigating to `url`; `remove(item)` (or the provider's)
 // makes it removable with Shift+Delete. `type` picks the glyph: "url",
 // "search", "history", "tab", "bookmark", anything else.
+//
+// The default providers are [tabProvider, bookmarkProvider,
+// historyProvider, searchProvider]: open tabs, then up to maxBookmarks
+// matches from `bookmarkStore` (marked ★, ranked above history; a URL that
+// is both shows once, as the bookmark), then history and search.
 Item {
     id: sug
 
     property Item addressField: null
     property var historyStore: null
+    // BookmarkStore whose matches bookmarkProvider lists.
+    property var bookmarkStore: null
+    property int maxBookmarks: 3
     // WebTabs for "switch to tab" entries.
     property var tabs: null
     property int maxItems: 8
@@ -61,8 +70,9 @@ Item {
         suggest: (text, ctx) => sug._historyItems(text, ctx),
         remove: item => { if (sug.historyStore) sug.historyStore.remove(item.url) }
     })
+    readonly property var bookmarkProvider: ({ name: "bookmarks", suggest: (text, ctx) => sug._bookmarkItems(text, ctx) })
     readonly property var searchProvider: ({ name: "search", suggest: text => [sug._searchItem(text)] })
-    property var providers: [tabProvider, historyProvider, searchProvider]
+    property var providers: [tabProvider, bookmarkProvider, historyProvider, searchProvider]
 
     readonly property var items: _items
     property int currentIndex: -1
@@ -254,6 +264,15 @@ Item {
         }))
     }
 
+    function _bookmarkItems(text, ctx) {
+        const store = ctx.bookmarkStore
+        if (!store) return []
+        return store.search(text, Math.min(ctx.limit, maxBookmarks)).map(b => ({
+            type: "bookmark", title: b.title || _display(b.url), url: b.url, icon: b.icon,
+            subtitle: _display(b.url)
+        }))
+    }
+
     function _tabItems(text, ctx) {
         if (!tabs) return []
         const words = _words(text)
@@ -300,7 +319,7 @@ Item {
         }
         _shownFor = addressField.input.text
         const ctx = { text: text, view: addressField.view, tabs: tabs, historyStore: historyStore,
-                      limit: maxItems }
+                      bookmarkStore: bookmarkStore, limit: maxItems }
         const results = []
         providers.forEach((p, i) => {
             let r = []
@@ -512,6 +531,17 @@ Item {
                             text: sug._glyph(row.modelData.type)
                             color: Style.textDim
                             font.pixelSize: Style.fontSize + 1
+                            font.family: Style.fontFamily
+                        }
+                        // Bookmarks keep a star next to their favicon.
+                        Text {
+                            objectName: "suggestionBookmarkBadge"
+                            x: parent.width - 6
+                            y: parent.height / 2 - 2
+                            visible: favicon.visible && row.modelData.type === "bookmark"
+                            text: "★"
+                            color: Style.accent
+                            font.pixelSize: Style.fontSize - 4
                             font.family: Style.fontFamily
                         }
                     }

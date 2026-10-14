@@ -20,6 +20,10 @@ Notes for contributors (human or agent). Read this before changing anything.
     newest-first list, frecency search, JSON file), its per-view
     `HistoryTracker` (what counts as a visit) and `HistoryModel` (filter
     proxy for history pages).
+  - `bookmarkstore.*` — `BookmarkStore` (bookmark tree: node tree + id map
+    + URL hash, Netscape HTML / JSON import and export, JSON file) and
+    `BookmarkModel` (one folder, a subtree or search results as a list model
+    updated row by row).
   - `plugin.*` — type registration and the `Cef` singleton.
 - `CefQml/Components/` — pure-QML module `CefQml.Components`: reusable browser
   building blocks (`WebTabs`, `TabStrip`, `NavigationBar`, `AddressField`,
@@ -32,6 +36,9 @@ Notes for contributors (human or agent). Read this before changing anything.
   History UI: `AddressSuggestions.qml` (omnibox drop-down, inline
   completion, providers), `HistoryView.qml` (history page) and
   `PanelOverlay.qml` (the modal panel host `Browser` uses for its managers).
+  Bookmark UI: `BookmarkButton.qml` (star), `BookmarksBar.qml`,
+  `BookmarkMenu.qml` (folder drop-downs), `BookmarkEditor.qml` (edit card),
+  `BookmarkManager.qml` and the internal `PopupMenu.qml` (context menus).
 - `examples/browser/` — the reference application (`main.qml`, `dev.qml` for
   live reload, `BrowserApp.qml`).
 - `tests/` — `qmltestrunner` suites, run by `tests/run.sh` (via `meson test`),
@@ -239,6 +246,37 @@ signal kills the process the default way.
   - Inline completion must not re-complete after Backspace/Delete (the user
     is removing the completion); `AddressSuggestions` checks the key before
     `textEdited` is processed.
+- Bookmarks:
+  - `BookmarkModel`'s id role is `nodeId`: a delegate cannot see a role
+    named `id` (it is the delegate's own id), and `model.id` is easy to
+    forget. `get(row)` and the store's objects still use `id`.
+  - Menus, the editor card and context menus reparent themselves to
+    `Window.window.contentItem` with a high `z` (BookmarkMenu 10000,
+    PopupMenu 10001, BookmarkEditor 10002) and fill it, with a backdrop
+    `MouseArea` that closes them; otherwise a bar inside a `Column` would
+    clip them or be covered by later siblings (the web view). They save and
+    restore `activeFocusItem`. Tests find them with `findChild` on the
+    window's content item, not on the bar.
+  - Bar and manager tests must wait for positioners after changing the
+    store (`tryVerify` on the item's `x`/`y`, see `waitForLayout` in
+    `tst_bookmarks.qml`): a click right after `fill()` lands on the item that
+    used to be there. The same holds after showing the manager's file row.
+  - `BookmarksBar` keeps items that do not fit in its `Row` (opacity 0,
+    disabled) so indexes stay stable; overflow is computed from the row's
+    `implicitWidth`.
+  - `BookmarkEditor` only validates the URL when the user changed the text:
+    re-parsing the displayed `data:` / IDN URL can fail or change it.
+  - Every suite shares `bookmarks.json` and `history.json`; a suite that
+    adds bookmarks or visits must `clear()` and `save()` both in
+    `cleanupTestCase`, or later suites (history ranking, suggestion counts)
+    see its leftovers.
+  - A `checkable` `BrowserAction` flips `checked` itself in `trigger()`,
+    which breaks a `checked` binding; `bookmarks.showBar` restores it with
+    `Qt.binding` after writing the target property.
+- QML: an `alias` cannot go through a property (`alias text: field.input.text`
+  fails with "Invalid alias reference"); give the inner item an alias and
+  alias that (`Field.text`). A property with the same name as an id in the
+  same scope (`property Item menu: menu`) binds to itself; use distinct ids.
 - QML's `URL` mangles `data:` URLs (and `new URL(rel, base)` with them);
   leave absolute URLs alone.
 - `destroy()` is deferred: a test that checks a `JsonStore` flush on
