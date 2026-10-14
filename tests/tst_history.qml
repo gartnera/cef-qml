@@ -356,8 +356,15 @@ Item {
             browser.hideHistory()
             browser.hideUserScripts()
             browser.historyView.filterText = ""
-            browser.tabs.restore([page(title || "start")], 0)
+            const url = page(title || "start")
+            const visits = () => { const e = history.entry(url); return e ? e.visitCount : 0 }
+            const before = visits()
+            browser.tabs.restore([url], 0)
             tryCompare(browser, "title", title || "start", 10000)
+            // The visit is recorded at loadFinished, which can come after the
+            // title: clearing before it would leave a stray entry behind.
+            if (history.enabled && history.recording)
+                tryVerify(() => visits() > before, 10000, "the reset page is recorded")
             view().forceActiveFocus()
             history.clear()
         }
