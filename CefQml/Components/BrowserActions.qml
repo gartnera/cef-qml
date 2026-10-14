@@ -11,7 +11,8 @@ import CefQml
 // UI-dependent actions are disabled until their target is set:
 // address.focus needs `addressField` (anything with focusAndSelect()),
 // page.find* need `findBar` (open(), findNext(forward), visible, text),
-// window.fullscreen needs `window`. Declare more BrowserActions inside, or
+// window.fullscreen needs `window`, userscripts.manage needs
+// `userScriptManager` (toggle(), visible). Declare more BrowserActions inside, or
 // replace one by adding an action with the same name.
 ActionRegistry {
     id: acts
@@ -20,6 +21,7 @@ ActionRegistry {
     property var addressField: null
     property var findBar: null
     property var window: null
+    property var userScriptManager: null
 
     readonly property CefWebView view: controller ? controller.currentView : null
     readonly property bool hasView: view !== null
@@ -190,6 +192,16 @@ ActionRegistry {
             if (acts.window.visibility === Window.FullScreen) acts.window.showNormal()
             else acts.window.showFullScreen()
         }
+    }
+
+    // userscripts.*
+    BrowserAction {
+        name: "userscripts.manage"; text: "Manage userscripts"
+        description: "Show or hide the userscript manager."
+        defaultShortcuts: ["Ctrl+Shift+U"]
+        checked: acts.userScriptManager !== null && acts.userScriptManager.visible
+        enabled: acts.userScriptManager !== null
+        onTriggered: acts.userScriptManager.toggle()
     }
 
     function _findStep(forward) {

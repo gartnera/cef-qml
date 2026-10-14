@@ -97,6 +97,10 @@ QtObject {
         })
     }
 
+    // Fetches a script's text without installing it (e.g. to review it
+    // first); calls callback(text, error).
+    function fetchSource(url, callback) { _fetch(String(url), callback) }
+
     // Replaces the source of script `id` (metadata may change, even @name).
     function update(id, source) {
         if (!script(id)) return { ok: false, error: "No such script: " + id }
@@ -195,6 +199,20 @@ QtObject {
         return true
     }
     function isAttached(view) { return !!_hostFor(view) }
+    // True once every change made so far is registered with `view`, i.e.
+    // its next document gets it (also true for views not attached).
+    function isApplied(view) {
+        const host = _hostFor(view)
+        return !host || host.settled()
+    }
+    // Calls callback() once isApplied(view) (e.g. before navigating in
+    // tests or automation).
+    function whenApplied(view, callback) {
+        const host = _hostFor(view)
+        if (!host) { callback(); return }
+        host.waiters.push(callback)
+        host.checkWaiters()
+    }
     // Ids of the scripts that run in `view`'s current top-level document,
     // as reported by the page.
     function runningScripts(view) {
@@ -370,6 +388,11 @@ QtObject {
             property var running: ({ page: [], content: [] })
             property bool registered: false
             property var xhrs: ({})
+            // Pending DevTools (un)registrations and queued refreshes.
+            property int outstanding: 0
+            property bool queuedAll: false
+            property bool queuedRuntime: false
+            property var waiters: []
 
             signal scriptsChanged()
             signal valuesChanged(string id)
@@ -383,30 +406,60 @@ QtObject {
                 registered = true
                 refreshAll()
             }
-            Component.onDestruction: if (store) store._hostGone(host)
-
-            onScriptsChanged: Qt.callLater(refreshAll)
-            onValuesChanged: id => {
-                if (store && store._scripts.some(s => s.id === id && s.enabled)) Qt.callLater(refreshRuntime)
+            Component.onDestruction: {
+                life.alive = false
+                if (store) store._hostGone(host)
             }
+
+            onScriptsChanged: { queuedAll = true; Qt.callLater(refreshAll) }
+            onValuesChanged: id => {
+                if (store && store._scripts.some(s => s.id === id && s.enabled)) {
+                    queuedRuntime = true
+                    Qt.callLater(refreshRuntime)
+                }
+            }
+
+            function settled() { return !queuedAll && !queuedRuntime && outstanding === 0 }
+            function checkWaiters() {
+                if (!settled() || !waiters.length) return
+                const w = waiters
+                waiters = []
+                for (const cb of w) cb()
+            }
+            function done() {
+                outstanding--
+                checkWaiters()
+            }
+
+            // Replies can arrive after this host is gone (detach()); they
+            // then only use what the closures captured.
+            property var life: ({ alive: true })
 
             function add(source, world, kind) {
                 const reg = { kind: kind, id: null, dropped: false }
+                const v = view, life = host.life
                 regs.push(reg)
                 const params = { source: source }
                 if (world === "content") params.worldName = store._world
-                view.devToolsMethod("Page.addScriptToEvaluateOnNewDocument", params, (r, err) => {
+                outstanding++
+                v.devToolsMethod("Page.addScriptToEvaluateOnNewDocument", params, (r, err) => {
+                    if (life.alive) host.done()
                     if (!r || r.identifier === undefined) {
                         console.warn("UserScriptStore: could not register a script:", err)
                         return
                     }
                     reg.id = r.identifier
-                    // Superseded before its identifier arrived.
-                    if (reg.dropped && view) removeId(reg.id)
+                    // Superseded (or detached) before its identifier arrived.
+                    if (!reg.dropped) return
+                    if (life.alive) host.removeId(reg.id)
+                    else v.devToolsMethod("Page.removeScriptToEvaluateOnNewDocument", { identifier: reg.id })
                 })
             }
             function removeId(id) {
-                view.devToolsMethod("Page.removeScriptToEvaluateOnNewDocument", { identifier: id })
+                const life = host.life
+                outstanding++
+                view.devToolsMethod("Page.removeScriptToEvaluateOnNewDocument", { identifier: id },
+                                    () => { if (life.alive) host.done() })
             }
             function drop(kinds) {
                 for (const reg of regs) {
@@ -420,19 +473,21 @@ QtObject {
 
             // Everything again: entries must precede their runtime.
             function refreshAll() {
-                if (!registered || !store || !view) return
+                queuedAll = false
+                queuedRuntime = false   // refreshAll includes the runtimes
+                if (!registered || !store || !view) { checkWaiters(); return }
                 drop(["entry", "runtime"])
                 for (const w of worlds()) {
                     for (const src of store._entries(w)) add(src, w, "entry")
                     add(store._runtime(w), w, "runtime")
                 }
-                if (worlds().indexOf("content") < 0 && running.content.length)
-                    setRunning("content", [])
             }
             // Only the runtimes (new GM values): the new ones are added
             // before the old ones go, so no document misses its runtime.
             function refreshRuntime() {
-                if (!registered || !store || !view) return
+                if (!queuedRuntime) return   // superseded by refreshAll
+                queuedRuntime = false
+                if (!registered || !store || !view) { checkWaiters(); return }
                 const old = regs.filter(r => r.kind === "runtime")
                 for (const w of worlds()) add(store._runtime(w), w, "runtime")
                 for (const reg of old) {
@@ -460,6 +515,15 @@ QtObject {
             property Connections _events: Connections {
                 target: host.view
                 function onDevToolsEvent(method, params) {
+                    // The top document went away (cross-document navigation):
+                    // its new document reports its scripts afresh.
+                    if (method === "Runtime.executionContextsCleared") {
+                        if (host.running.page.length || host.running.content.length) {
+                            host.running = { page: [], content: [] }
+                            host.store.runningChanged(host.view)
+                        }
+                        return
+                    }
                     if (method !== "Runtime.bindingCalled" || !host.registered) return
                     const world = params.name === host.store._pageBinding ? "page"
                                 : params.name === host.store._contentBinding ? "content" : ""

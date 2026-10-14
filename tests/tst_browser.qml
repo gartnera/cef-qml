@@ -241,5 +241,52 @@ Item {
             tryCompare(browser.tabs, "count", 1, 5000)
             tryCompare(browser, "title", "New Tab", 10000)
         }
+
+        function test_17_userscript_manager_and_install_prompt() {
+            resetTabs()
+            const store = browser.userScriptStore
+            verify(store)
+            const overlay = find("userScriptOverlay")
+            verify(!overlay.visible)
+            // Ctrl+Shift+U toggles the manager.
+            keyClick(Qt.Key_U, Qt.ControlModifier | Qt.ShiftModifier)
+            tryVerify(() => overlay.visible, 2000)
+            verify(browser.userScriptManagerVisible)
+            verify(browser.actions.action("userscripts.manage").checked)
+            keyClick(Qt.Key_Escape)
+            tryVerify(() => !overlay.visible, 2000, "Escape closes it")
+
+            // A *.user.js page offers to install the script.
+            const source = "// ==UserScript==\n// @name Prompted\n// @version 1.5\n// @grant none\n" +
+                           "// ==/UserScript==\ndocument.documentElement.setAttribute('data-prompted', 'yes')\n"
+            const path = Cef.profileDir + "/prompted.user.js"
+            const xhr = new XMLHttpRequest()
+            xhr.open("PUT", "file://" + path)
+            xhr.send(source)
+            tryVerify(() => xhr.readyState === XMLHttpRequest.DONE, 5000)
+            view().url = "file://" + path
+            tryVerify(() => overlay.visible, 10000, "install prompt")
+            const manager = browser.userScriptManager
+            tryCompare(manager, "editing", "new", 5000)
+            verify(manager.status.indexOf("Install Prompted 1.5?") === 0, manager.status)
+            compare(manager.editorText, source)
+            click(find("userScriptSave"))
+            tryCompare(store, "count", 1, 2000)
+            compare(store.scripts[0].url, "file://" + path)
+            click(find("userScriptClose"))
+            tryVerify(() => !overlay.visible, 2000)
+
+            // It runs on the next page, and the manager shows it running.
+            tryVerify(() => store.isApplied(view()), 5000)
+            view().url = page("us page")
+            tryCompare(browser, "title", "us page", 10000)
+            tryVerify(() => evaluate("document.documentElement.getAttribute('data-prompted')") === "yes", 5000)
+            browser.trigger("userscripts.manage")
+            tryVerify(() => overlay.visible, 2000)
+            tryVerify(() => find("userScriptRunning_" + store.scripts[0].id).visible, 5000)
+            browser.hideUserScripts()
+            verify(!overlay.visible)
+            store.remove(store.scripts[0].id)
+        }
     }
 }

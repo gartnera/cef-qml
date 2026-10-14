@@ -30,6 +30,10 @@ Item {
         id: storeComponent
         UserScriptStore { }
     }
+    Component {
+        id: managerComponent
+        UserScriptManager { width: 800; height: 600 }
+    }
     // Reads the system clipboard (paste()).
     TextEdit { id: clipboardReader; visible: false }
 
@@ -44,15 +48,18 @@ Item {
         when: windowShown
 
         property var views: []
+        property var manager: null
 
         // A new view attached to `s` (default: store) before its first page.
         function newView(url, s) {
-            const v = viewComponent.createObject(root, { url: url })
+            const v = viewComponent.createObject(root, { url: url, z: -1 })
             ;(s || store).attach(v)
             views.push(v)
             return v
         }
         function load(v, url, title) {
+            // Changes apply to documents started after their registration.
+            tryVerify(() => store.isApplied(v), 5000, "changes registered")
             v.url = url
             tryCompare(v, "title", title, 15000)
             tryCompare(v, "loading", false, 15000)
@@ -85,9 +92,16 @@ Item {
             return r.script
         }
 
+        function child(parent, name) {
+            let item = null
+            tryVerify(() => (item = findChild(parent, name)) !== null, 5000, "no child " + name)
+            return item
+        }
+
         function cleanup() {
             for (const v of views) v.destroy()
             views = []
+            if (manager) { manager.destroy(); manager = null }
             for (const s of store.scripts.slice()) store.remove(s.id)
         }
 
@@ -273,6 +287,11 @@ Item {
             waitFor(v, attr("data-t"), "v1")
             store.setEnabled(s.id, false)
             compare(store.script(s.id).enabled, false)
+            verify(!store.isApplied(v), "a refresh is queued")
+            let applied = false
+            store.whenApplied(v, () => applied = true)
+            tryVerify(() => applied, 5000, "whenApplied")
+            verify(store.isApplied(v))
             load(v, page("t2"), "t2")
             compare(evaluate(v, attr("data-t")), null, "disabled")
             store.setEnabled(s.id, true)
@@ -449,6 +468,131 @@ Item {
             load(v, page("tab2"), "tab2")
             compare(evaluate(v, attr("data-tabs")), null, "detached")
             tabs.destroy()
+        }
+
+        // --- UserScriptManager ----------------------------------------
+
+        function test_manager_ui() {
+            const a = install(["name Alpha", "version 2.0", "description first one", "match *://*/*",
+                               "include data:*", "grant none"],
+                              "document.documentElement.setAttribute('data-alpha', 'ran')")
+            const b = install(["name Beta", "match https://nomatch.invalid/*", "grant GM_setValue"])
+            store.setValue(b.id, "k", 1)
+            const v = newView(page("mgr"))
+            tryCompare(v, "title", "mgr", 15000)
+            waitFor(v, attr("data-alpha"), "ran")
+            manager = managerComponent.createObject(root, { store: store, view: v })
+
+            // Rows, metadata and "running on this page".
+            child(manager, "userScriptRow_" + a.id)
+            child(manager, "userScriptRow_" + b.id)
+            compare(findChild(manager, "userScriptList").count, 2)
+            tryVerify(() => child(manager, "userScriptRunning_" + a.id).visible, 5000, "Alpha runs here")
+            verify(!child(manager, "userScriptRunning_" + b.id).visible)
+            compare(manager.runningIds, [a.id])
+            verify(child(manager, "userScriptClearValues_" + b.id).visible, "Beta has a value")
+            verify(!child(manager, "userScriptClearValues_" + a.id).visible)
+
+            // Disable Alpha with its switch: later documents do not run it.
+            mouseClick(child(manager, "userScriptToggle_" + a.id))
+            tryVerify(() => !store.script(a.id).enabled, 2000)
+            verify(!child(manager, "userScriptToggle_" + a.id).checked)
+            load(v, page("mgr2"), "mgr2")
+            compare(evaluate(v, attr("data-alpha")), null, "disabled")
+            tryVerify(() => manager.runningIds.length === 0, 5000, "nothing runs now")
+            verify(!child(manager, "userScriptRunning_" + a.id).visible)
+            mouseClick(child(manager, "userScriptToggle_" + a.id))
+            tryVerify(() => store.script(a.id).enabled, 2000)
+            load(v, page("mgr3"), "mgr3")
+            waitFor(v, attr("data-alpha"), "ran", "enabled again")
+            tryVerify(() => child(manager, "userScriptRunning_" + a.id).visible, 5000)
+
+            // Clear values.
+            mouseClick(child(manager, "userScriptClearValues_" + b.id))
+            compare(Object.keys(store.values(b.id)).length, 0)
+            tryVerify(() => !child(manager, "userScriptClearValues_" + b.id).visible, 2000)
+
+            // Edit Alpha's source in the editor and save.
+            mouseClick(child(manager, "userScriptEdit_" + a.id))
+            compare(manager.editing, a.id)
+            const editor = child(manager, "userScriptEditor")
+            verify(editor.visible)
+            tryVerify(() => editor.activeFocus, 2000)
+            compare(editor.text, store.script(a.id).source)
+            editor.text = editor.text.replace("version 2.0", "version 2.1").replace("'ran'", "'edited'")
+            verify(manager.editorModified)
+            mouseClick(child(manager, "userScriptSave"))
+            compare(manager.editing, "")
+            compare(store.script(a.id).version, "2.1")
+            verify(manager.status.indexOf("Updated Alpha 2.1") === 0, manager.status)
+            load(v, page("mgr4"), "mgr4")
+            waitFor(v, attr("data-alpha"), "edited")
+
+            // A broken edit is refused and keeps the editor open.
+            mouseClick(child(manager, "userScriptEdit_" + a.id))
+            editor.text = "no header"
+            mouseClick(child(manager, "userScriptSave"))
+            compare(manager.editing, a.id)
+            verify(manager.statusIsError)
+            keyClick(Qt.Key_Escape)
+            compare(manager.editing, a.id, "Escape keeps unsaved changes")
+            mouseClick(child(manager, "userScriptCancel"))
+            compare(manager.editing, "")
+            compare(store.script(a.id).version, "2.1", "unchanged")
+
+            // New script from the template (matches the current site).
+            mouseClick(child(manager, "userScriptNew"))
+            compare(manager.editing, "new")
+            verify(editor.text.indexOf("@match       *://*/*") > 0, "data: page: generic match")
+            keyClick(Qt.Key_End, Qt.ControlModifier)
+            keyClick(Qt.Key_X)
+            compare(editor.text.slice(-1), "x", "typing goes to the editor")
+            editor.text = userscript(["name Gamma", "grant none"], "")
+            keyClick(Qt.Key_S, Qt.ControlModifier)
+            compare(manager.editing, "")
+            compare(store.count, 3)
+            compare(store.scripts[2].name, "Gamma")
+
+            // Paste a script from the clipboard.
+            Cef.copyToClipboard(userscript(["name Delta", "grant none"], ""))
+            mouseClick(child(manager, "userScriptPaste"))
+            compare(manager.editing, "new")
+            tryVerify(() => editor.text.indexOf("Delta") > 0, 3000, "pasted")
+            mouseClick(child(manager, "userScriptSave"))
+            compare(store.count, 4)
+
+            // Review and install from a URL.
+            const urlInput = child(manager, "userScriptUrlInput")
+            urlInput.text = "data:text/plain," + encodeURIComponent(userscript(["name Epsilon", "version 3"], ""))
+            mouseClick(child(manager, "userScriptReviewUrl"))
+            tryCompare(manager, "editing", "new", 5000)
+            verify(manager.status.indexOf("Install Epsilon 3?") === 0, manager.status)
+            compare(manager.editorUrl, urlInput.text)
+            mouseClick(child(manager, "userScriptSave"))
+            compare(store.count, 5)
+            compare(store.scripts[4].url, urlInput.text)
+            urlInput.text = "data:text/plain,nothing"
+            mouseClick(child(manager, "userScriptReviewUrl"))
+            tryVerify(() => manager.statusIsError, 5000)
+            compare(manager.editing, "")
+
+            // Remove asks for a second click.
+            const remove = child(manager, "userScriptRemove_" + b.id)
+            mouseClick(remove)
+            compare(store.count, 5)
+            compare(remove.text, "Remove?")
+            mouseClick(remove)
+            compare(store.count, 4)
+            verify(!store.script(b.id))
+
+            // Escape in the list asks to close.
+            const spy = Qt.createQmlObject("import QtTest; SignalSpy { signalName: 'closeRequested' }", manager)
+            spy.target = manager
+            manager.forceActiveFocus()
+            keyClick(Qt.Key_Escape)
+            compare(spy.count, 1)
+            mouseClick(child(manager, "userScriptClose"))
+            compare(spy.count, 2)
         }
     }
 }

@@ -24,6 +24,10 @@ Item {
         //     "app.copyTitle": ["Ctrl+Shift+C"],
         // })
 
+        // Userscripts: Ctrl+Shift+U opens the manager; opening a *.user.js
+        // URL offers to install it. browser.userScriptStore holds them
+        // (Cef.dataDir/userscripts); userScriptStore: null turns them off.
+
         // An action of your own; give it keys here or in `bindings`.
         // BrowserAction {
         //     registry: browser.actions

@@ -21,7 +21,10 @@ Notes for contributors (human or agent). Read this before changing anything.
   building blocks (`WebTabs`, `TabStrip`, `NavigationBar`, `AddressField`,
   `FindBar`, `RequestOverlay`, `ContextMenu`, `DownloadsBar`, ...) and the
   reference `Browser` that composes them. Anything a custom browser could
-  reuse belongs here, not in `examples/`.
+  reuse belongs here, not in `examples/`. Userscripts: `UserScripts.js`
+  (metadata parser, URL rules, and the in-page runtime as a string),
+  `UserScriptStore.qml` (persistence, DevTools registration per view, the
+  page -> host message handler) and `UserScriptManager.qml` (UI).
 - `examples/browser/` — the reference application (`main.qml`, `dev.qml` for
   live reload, `BrowserApp.qml`).
 - `tests/` — `qmltestrunner` suites, run by `tests/run.sh` (via `meson test`),
@@ -174,6 +177,35 @@ signal kills the process the default way.
   `loadFinished`; `loadFinished` alone cannot tell the two apart.
 - XMLHttpRequest file writes in tests are asynchronous; wait for `DONE`.
 - `pkill -f <pattern>` can match (and kill) your own shell; prefer pids.
+- Userscripts / DevTools protocol:
+  - `Page.addScriptToEvaluateOnNewDocument` entries run in registration
+    (identifier) order in every new document, main frame and same-process
+    subframes; `worldName` puts one in an isolated world. Replacing entries
+    means add-new-then-remove-old (values) or remove-then-add (scripts,
+    whose order matters).
+  - Identifiers arrive asynchronously. An entry replaced before its
+    identifier arrived must be removed when it does, or it leaks and runs
+    twice (`UserScriptStore` marks such registrations `dropped`). Replies can
+    also arrive after the host object is destroyed (detach): callbacks must
+    not touch a destroyed QML object's scope.
+  - Registrations are not instantaneous: a navigation started right after a
+    change may miss it (notably across a renderer-process switch, e.g.
+    `file:` -> `data:`). Tests wait for `store.isApplied(view)` first.
+  - `Runtime.addBinding` only delivers `Runtime.bindingCalled` after
+    `Runtime.enable`. Without `executionContextName` the binding exists in
+    every world (page and isolated); with it, only in that world. Deleting
+    the global (`delete globalThis[name]`) keeps a captured reference
+    working, which is how the runtime hides the channel from the page.
+  - `Runtime.executionContextsCleared` marks a main-frame cross-document
+    navigation (used to reset "running on this page").
+  - A `srcdoc` iframe in a test page makes DevTools hang (`Runtime.evaluate`
+    never answers, `loading` stays true): use `data:` iframes.
+  - Out-of-process iframes are separate DevTools targets; the view's session
+    does not cover them, so they get no scripts.
+- QML's `URL` mangles `data:` URLs (and `new URL(rel, base)` with them);
+  leave absolute URLs alone.
+- `destroy()` is deferred: a test that checks a `JsonStore` flush on
+  destruction must wait (`tryVerify`) for it.
 - C string hex escapes are greedy: write `"\x01" "cefqml:..."`, not
   `"\x01cefqml:..."`.
 

@@ -417,13 +417,14 @@ through `Style`, or copy one as the starting point for your own.
 
 | Component | Purpose and key API |
 |---|---|
-| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts). Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
+| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts), `userScriptManager` (the `UserScriptManager` overlay), `userScriptManagerVisible`, `offerUserScriptInstall` (default true). Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`, `showUserScripts()`, `hideUserScripts()`, `reviewUserScript(url)`, `isUserScriptUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
 | `BrowserController` | Non-visual programmatic API over a `WebTabs` (`tabs`): navigation that reports its result, tab helpers, zoom, recently closed tabs. See below. |
 | `BrowserAction` | A named command: `name` (`"tab.new"`), `text`, `description`, `category`, `enabled`, `checkable`/`checked`, `defaultShortcuts`, signal `triggered(args)`, `trigger(args)`. |
 | `ActionRegistry` | A set of `BrowserAction`s looked up and run by name: `model` (for menus or a command palette), `count`, `action(name)`, `has(name)`, `names()`, `trigger(name, args)`, `add(action or { name, text, defaultShortcuts, onTriggered })`, `remove(nameOrAction)`, signal `actionTriggered(name, args)`. |
-| `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar` and `window` they act on. |
+| `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar`, `window` and `userScriptManager` they act on. |
 | `KeyBindings` | Window-wide keyboard shortcuts for an `ActionRegistry` (`actions`): defaults from the actions, `bindings` overrides, conflict resolution, modes. See below. |
 | `UserScriptStore` | Installed userscripts and their GM values, persisted under `Cef.dataDir`, injected into attached views. See [Userscripts](#userscripts). |
+| `UserScriptManager` | Manager UI for a `UserScriptStore` (`store`), with `view` for "running on this page". See [Managing scripts](#managing-scripts). |
 | `WebTabs` | Non-visual tab manager: one `CefWebView` per tab, stacked, only the current one visible. `views`, `count`, `currentIndex`, `currentView`, `homeUrl`, `viewDelegate` (a `Component` deriving from `CefWebView`), `openPopupsInNewTabs`, `closeOnRequest`, `userScriptStore` (a `UserScriptStore` injected into every tab). `openTab(url, background, index)`, `closeTab(index)`, `moveTab(from, to)`, `closeAll()`, `indexOf(view)`, `urls()` / `restore(urls, current)` for sessions. Signals `tabOpened`, `tabClosed(view, index)`, `lastTabClosed`, `sessionChanged`, `contextMenuRequested(view, ...)`; set `interceptJavaScriptDialogs` / `interceptPermissions` / `interceptFileDialogs` / `interceptDownloads` to receive every tab's requests as `javaScriptDialogRequested(view, dialog)`, `permissionRequested(view, request)`, `fileDialogRequested(view, request)`, `downloadRequested(view, download)`. |
 | `TabStrip` | Horizontal tab bar for a `WebTabs` (`tabs`, required): click selects, middle click or × closes, + emits `newTabRequested()`. `maxTabWidth`, `minTabWidth`. |
 | `NavigationBar` | Back / forward / reload-stop, an `AddressField` and a load-progress line for `view`. `addressField`, `searchUrl`; children are placed after the address field (e.g. a menu button). |
@@ -454,7 +455,8 @@ userScripts.install(sourceText)                     // { ok, script, updated, er
 userScripts.installFromUrl("https://example.com/x.user.js", result => ...)
 ```
 
-`Browser` has one (`userScriptStore`).
+`Browser` has one (`userScriptStore`) and a manager for it (Ctrl+Shift+U,
+see [Managing scripts](#managing-scripts)).
 
 | `UserScriptStore` member | Description |
 |---|---|
@@ -467,6 +469,8 @@ userScripts.installFromUrl("https://example.com/x.user.js", result => ...)
 | `values(id)`, `setValue(id, key, value)`, `deleteValue(id, key)`, `clearValues(id)` | A script's GM storage (JSON values). |
 | `attach(view)`, `detach(view)`, `isAttached(view)` | Inject into a `CefWebView`. A view attached before its browser exists gets the scripts on its first page; otherwise from its next document on. |
 | `runningScripts(view)` | Ids of the scripts that run in the view's current top-level document, as reported by the page. |
+| `isApplied(view)`, `whenApplied(view, callback)` | Whether / once every change made so far is registered with the view (its next document gets it). Useful before navigating from code right after a change. |
+| `fetchSource(url, callback(text, error))` | Fetch a script without installing it (to review it). |
 | `save()`, `reload()` | Write now / re-read both files (also saved automatically). |
 | `parseMetadata(source)`, `matches(patternOrMeta, url)` | The parser and URL rules, for tools and tests. |
 | signals `installed(script, updated)`, `removed(id)`, `valuesChanged(id)`, `runningChanged(view)` | |
@@ -559,6 +563,37 @@ Values are seeded into every matching document, so keep them small. A page's
 CSP may block `GM_addStyle` styles. Two `UserScriptStore`s on the same
 directory (or two processes) overwrite each other's files.
 
+#### Managing scripts
+
+`UserScriptManager` is the UI for a store, built from plain QtQuick items
+and themed by `Style`:
+
+```qml
+UserScriptManager { store: userScripts; view: tabs.currentView; onCloseRequested: visible = false }
+```
+
+It lists the scripts in run order with an enable switch, name, version,
+description, where they run (match summary, world, `@run-at`, stored
+values), errors and warnings, and a "running on this page" badge for the
+scripts that run in `view`'s current document. Each script can be edited
+(source editor; Ctrl+S saves), have its values cleared, or be removed (click
+Remove twice). New scripts come from a template for the current site
+("New"), from the clipboard ("Paste") or from a URL ("Install…"); a fetched
+script opens in the editor for review and is installed with "Install".
+Escape closes the editor when nothing changed, otherwise the manager.
+API: `edit(id)`, `newScript(source)`, `pasteScript()`, `review(url)`,
+`save()`, `cancelEdit()`, `toggle(id)`, `setEnabled(id, on)`, `remove(id)`,
+`clearValues(id)`, `template()`; read-only `editing` (`""`, `"new"` or an
+id), `editorText`, `editorModified`, `editorUrl`, `runningIds`, `status`,
+`statusIsError`; signal `closeRequested()`. Its items have `objectName`s for
+tests and automation (listed in `UserScriptManager.qml`).
+
+`Browser` shows it as an overlay with the `userscripts.manage` action
+(Ctrl+Shift+U), and when a tab finishes loading an `http(s):` or `file:` URL
+ending in `.user.js` it opens the manager reviewing that script
+(`offerUserScriptInstall: false` turns that off). The script is fetched again
+by Qt, without the page's cookies.
+
 ### Actions, key bindings and scripting
 
 Everything the browser does from the keyboard is a named **action**
@@ -582,6 +617,7 @@ and the same pieces work in a layout of your own.
 | `zoom.in`, `zoom.out`, `zoom.reset` | Ctrl+=, Ctrl++ / Ctrl+- / Ctrl+0 | |
 | `edit.undo`, `edit.redo`, `edit.cut`, `edit.copy`, `edit.paste`, `edit.selectAll`, `page.copyUrl` | | |
 | `window.fullscreen` | F11 | `checked` reflects the window state |
+| `userscripts.manage` | Ctrl+Shift+U | shows / hides the userscript manager; `checked` while shown |
 
 Every action has a human-readable `text`, and `enabled` follows the state
 (e.g. `nav.back` only with history). Disabled actions do not run, and their
@@ -790,6 +826,12 @@ Qt logging: the plugin logs under the category `cefqml`
   application exits. One browser process per profile directory.
 - Linux x86_64 only. Tested with Qt 6.4.2 (Ubuntu 24.04), offscreen and
   Wayland (Weston) platforms. No sandbox (`no_sandbox`).
+- **Userscripts** cover a Greasemonkey/Tampermonkey subset (see
+  [Userscripts](#userscripts)): no scripts in out-of-process (cross-site)
+  iframes, `about:blank` or `srcdoc` frames; changes reach new documents
+  only; `GM_xmlhttpRequest` uses Qt's network stack without Chromium's
+  cookies; no `@resource`, menu commands, notifications, value-change
+  listeners or automatic updates.
 
 ## Testing
 

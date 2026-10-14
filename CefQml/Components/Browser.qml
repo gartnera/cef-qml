@@ -40,6 +40,12 @@ FocusScope {
     // Userscripts injected into every tab (UserScriptStore, persisted under
     // Cef.dataDir/userscripts). Set to null to disable them.
     property QtObject userScriptStore: UserScriptStore { }
+    // The userscript manager overlay (UserScriptManager; action
+    // "userscripts.manage", Ctrl+Shift+U) and whether it is shown.
+    property alias userScriptManager: usManager
+    readonly property bool userScriptManagerVisible: userScriptOverlay.visible
+    // Offer to install pages whose URL ends in .user.js (http(s) and file:).
+    property bool offerUserScriptInstall: true
 
     signal lastTabClosed()
 
@@ -59,6 +65,16 @@ FocusScope {
     function findTab(predicate) { return ctl.findTab(predicate) }
     function tabForUrl(url) { return ctl.tabForUrl(url) }
     function whenLoaded(view, callback, opts) { return ctl.whenLoaded(view, callback, opts) }
+    function showUserScripts() { userScriptOverlay.open() }
+    function hideUserScripts() { userScriptOverlay.close() }
+    // Opens the manager reviewing the userscript at `url` for installation.
+    function reviewUserScript(url) {
+        userScriptOverlay.open()
+        usManager.review(url)
+    }
+    function isUserScriptUrl(url) {
+        return /^(https?|file):[^?#]*\.user\.js([?#].*)?$/i.test(String(url))
+    }
     // Runs the action `name` (e.g. "tab.next", "tab.select" with { index: 2 }).
     function trigger(name, args) { return acts.trigger(name, args) }
 
@@ -173,6 +189,46 @@ FocusScope {
             anchors.fill: parent
             tabs: webTabs
         }
+
+        Item {
+            id: userScriptOverlay
+            objectName: "userScriptOverlay"
+            anchors.fill: parent
+            visible: false
+            function open() {
+                if (!browser.userScriptStore) return
+                visible = true
+                usManager.focusDefault()
+            }
+            function close() {
+                if (!visible) return
+                visible = false
+                if (webTabs.currentView) webTabs.currentView.forceActiveFocus()
+            }
+            function toggle() { visible ? close() : open() }
+
+            Rectangle {
+                anchors.fill: parent
+                color: "#80000000"
+                MouseArea {
+                    anchors.fill: parent
+                    acceptedButtons: Qt.AllButtons
+                    onClicked: userScriptOverlay.close()
+                    onWheel: {}
+                }
+            }
+            UserScriptManager {
+                id: usManager
+                objectName: "userScriptManager"
+                anchors.horizontalCenter: parent.horizontalCenter
+                y: Math.max(8, Math.min(48, (parent.height - 600) / 2))
+                width: Math.min(820, parent.width - 32)
+                height: Math.min(600, parent.height - 2 * y)
+                store: browser.userScriptStore
+                view: webTabs.currentView
+                onCloseRequested: userScriptOverlay.close()
+            }
+        }
     }
 
     DownloadsBar {
@@ -215,6 +271,18 @@ FocusScope {
         addressField: navBar.addressField
         findBar: findBar
         window: browser.Window.window
+        userScriptManager: browser.userScriptStore ? userScriptOverlay : null
+    }
+
+    // Install prompt for *.user.js pages loaded in the current tab.
+    Connections {
+        target: webTabs.currentView
+        function onLoadingChanged() {
+            const v = webTabs.currentView
+            if (browser.offerUserScriptInstall && browser.userScriptStore && v && !v.loading
+                    && browser.isUserScriptUrl(v.url))
+                browser.reviewUserScript(v.url.toString())
+        }
     }
 
     // Window-wide, so they work while a page has focus.
