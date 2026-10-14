@@ -1,0 +1,51 @@
+# Ubuntu 24.04 packages for building and testing cef-qml (Qt 6.4.2).
+# Installed with --no-install-recommends by .github/workflows/*.yml.
+# Not listed on purpose: qml6-module-qtquick-dialogs. It is optional at
+# runtime, and with it installed two tst_browser tests flake (see
+# docs/DEVELOPMENT.md, Gotchas).
+
+# Build
+meson
+ninja-build
+g++
+pkg-config
+python3
+
+# Qt
+qt6-base-dev
+qt6-base-dev-tools
+qt6-declarative-dev
+qt6-declarative-dev-tools
+qml-qt6
+qml6-module-qtquick
+qml6-module-qtquick-window
+qml6-module-qtqml-workerscript
+qml6-module-qttest
+
+# Wayland test suite (private headless compositor)
+qt6-wayland
+weston
+libgl1-mesa-dri
+libegl-mesa0
+
+# CEF runtime
+libnss3
+libnspr4
+libasound2t64
+libatk-bridge2.0-0t64
+libatk1.0-0t64
+libatspi2.0-0t64
+libcups2t64
+libgbm1
+libdrm2
+libxcomposite1
+libxdamage1
+libxfixes3
+libxrandr2
+libxkbcommon0
+xkb-data
+libpango-1.0-0
+libcairo2
+libdbus-1-3
+fontconfig
+fonts-dejavu-core

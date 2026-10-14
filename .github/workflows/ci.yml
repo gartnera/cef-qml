@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    # Ubuntu 24.04 ships Qt 6.4.2, the version the project is developed and
+    # tested against.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          grep -v -e '^#' -e '^$' .github/apt-packages.txt |
+            xargs sudo apt-get install -y --no-install-recommends
+
+      # The CEF minimal distribution (~310 MB) that meson's wrap downloads.
+      - name: Restore CEF download
+        id: cef-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: subprojects/packagecache
+          key: cef-${{ runner.os }}-${{ hashFiles('subprojects/cef.wrap') }}
+
+      - name: Configure
+        run: meson setup build
+
+      # Saved right after the download so a failing build or test still
+      # populates the cache.
+      - name: Save CEF download
+        if: steps.cef-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: subprojects/packagecache
+          key: cef-${{ runner.os }}-${{ hashFiles('subprojects/cef.wrap') }}
+
+      - name: Build
+        run: meson compile -C build
+
+      - name: Test
+        run: meson test -C build --print-errorlogs
+
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: meson-logs
+          path: build/meson-logs/
+          if-no-files-found: ignore
