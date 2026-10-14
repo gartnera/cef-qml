@@ -49,6 +49,17 @@ class CefContext : public QObject {
   QList<CefDownload*> downloads() const { return m_downloads; }
   void addDownload(CefDownload* download);
 
+  // Chromium profile directory of this process (root_cache_path): the
+  // configured one (CEF_QML_CACHE_DIR or <GenericDataLocation>/cef-qml/<app>),
+  // or a throwaway one when another live process holds it. Chosen once, on
+  // first use, so reading it before CEF starts gives the same answer.
+  QString profileDir();
+  // Directory for the app's own persistent data (JsonStore), kept apart from
+  // Chromium's files: "<configured profile>/cefqml". Always derived from the
+  // *configured* profile, so a second instance that had to fall back to a
+  // throwaway Chromium profile still sees the same app data.
+  QString dataDir();
+
   // Chromium --ozone-platform value chosen for this process.
   QString ozonePlatform() const { return m_ozonePlatform; }
 
@@ -67,6 +78,7 @@ class CefContext : public QObject {
   void installQuitSignalHandlers(const struct sigaction* hostActions);
 
   static QString locateRuntimeDir();
+  static QString configuredCacheDir();
   static QString chooseCacheDir();
 
   State m_state = State::Uninitialized;
@@ -77,5 +89,6 @@ class CefContext : public QObject {
   QSet<CefQmlClient*> m_clients;
   QList<CefDownload*> m_downloads;
   QString m_runtimeDir;
+  QString m_profileDir;
   QString m_ozonePlatform;
 };

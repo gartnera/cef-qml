@@ -344,10 +344,47 @@ Downloads outlive the view that started them; all of them are listed in
 | `version` | CEF version, e.g. `"154.0.34"`. |
 | `chromiumVersion` | e.g. `"154.0.8037.98"`. |
 | `runtimeDir` | Directory of the loaded `libcef.so` (helper, resources, locales). |
+| `profileDir` | Chromium profile directory in use (cookies, cache, local storage): `CEF_QML_CACHE_DIR`, the default profile, or a temporary one when another process holds it. Valid before the first view exists. |
+| `dataDir` | Directory for the app's own data (`JsonStore` files): `<configured profile>/cefqml`, apart from Chromium's files. Unlike `profileDir` it never falls back to a temporary directory, so a second instance shares it. |
 | `downloads` | All `CefDownload`s of this process, oldest first (`downloadsChanged()`). |
 | `urlFromUserInput(string text)` | What an address bar does with typed text: `"example.com"` → `https://example.com`, `"/tmp/x.html"` → file URL, `"localhost:8080"` → `http://localhost:8080`. Returns an invalid (empty) URL for text that is not an address (e.g. a search query). |
 | `copyToClipboard(string text)` | |
 | `environment(string name)` | Value of an environment variable (`""` if unset). |
+
+### `JsonStore`
+
+A JSON document persisted to a file: the storage primitive behind
+`UserScriptStore`, and meant for any app state (history, bookmarks,
+settings, ...).
+
+```qml
+JsonStore {
+    id: prefs
+    path: "prefs.json"              // -> Cef.dataDir + "/prefs.json"
+    data: ({ theme: "dark" })       // default while the file does not exist
+}
+// prefs.get("theme"), prefs.set("theme", "light"), prefs.data = { ... }
+```
+
+| Member | Description |
+|---|---|
+| `path` | File to use. Relative paths resolve under `Cef.dataDir`; absolute paths and `file:` URLs are used as they are. Empty: in-memory only. Changing it saves pending changes to the old file, then loads the new one. |
+| `filePath` | Resolved absolute path (read-only). |
+| `data` | The document: an object or an array. Read when the component completes; while the file does not exist, the value assigned in QML is the default (it is not written until something changes). Mutating it in place (`data.x = 1`) changes a copy: assign a new value or use `set()`/`remove()`. |
+| `loaded` | The file was read, or found missing or unreadable (read-only). |
+| `dirty` | Changes not written yet (read-only). |
+| `autoSave` | Write changes `saveDelay` ms (default 500) after the last one (default `true`). Pending changes are always written when the store is destroyed and when the application quits. |
+| `errorString` | Last load or save error, `""` after a successful one (read-only). |
+| `bool save()` | Write now (atomically: `QSaveFile`, so a crash leaves the old or the new file). |
+| `bool reload()` | Discard unsaved changes and read the file again. |
+| `get(key, default)`, `set(key, value)`, `remove(key)`, `keys()` | Helpers for object documents. |
+| signals `saved()`, `error(string message)` | |
+
+A file that is not valid JSON is copied to `<file>.corrupt`, reported through
+`errorString`/`error()`, and the store goes on with its default; the next
+save replaces the broken file. Each file should have one `JsonStore` at a
+time: two stores (or two processes) writing the same file do not merge, the
+last write wins.
 
 ### `HotReload` (Item)
 
@@ -601,7 +638,7 @@ same protocol without a port.
 
 | Variable | Effect |
 |---|---|
-| `CEF_QML_CACHE_DIR` | Profile directory (cookies, cache, local storage). Default: `<GenericDataLocation>/cef-qml/<application name>` (`~/.local/share/cef-qml/<app>`). If another live process holds it, a temporary profile is used instead. |
+| `CEF_QML_CACHE_DIR` | Profile directory (cookies, cache, local storage). Default: `<GenericDataLocation>/cef-qml/<application name>` (`~/.local/share/cef-qml/<app>`). If another live process holds it, a temporary profile is used instead. App data (`JsonStore`, userscripts) goes to its `cefqml/` subdirectory. |
 | `CEF_QML_REMOTE_DEBUGGING_PORT` | Enable the CDP endpoint on this port (see above). |
 | `CEF_QML_FLAGS` | Extra Chromium switches, e.g. `"--enable-features=Foo --force-device-scale-factor=2"`. |
 | `CEF_QML_OZONE_PLATFORM` | Chromium's Ozone platform. Default: `x11` under the Qt `xcb` platform, `headless` otherwise (including Wayland). |

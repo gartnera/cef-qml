@@ -10,6 +10,10 @@ class CefGlobal : public QObject {
   Q_PROPERTY(QString version READ version CONSTANT)
   Q_PROPERTY(QString chromiumVersion READ chromiumVersion CONSTANT)
   Q_PROPERTY(QString runtimeDir READ runtimeDir CONSTANT)
+  // Chromium profile directory in use (cookies, cache, local storage).
+  Q_PROPERTY(QString profileDir READ profileDir CONSTANT)
+  // Directory for the app's own data (JsonStore files): "<profile>/cefqml".
+  Q_PROPERTY(QString dataDir READ dataDir CONSTANT)
   // All downloads of this process (CefDownload objects), oldest first.
   Q_PROPERTY(QList<QObject*> downloads READ downloads NOTIFY downloadsChanged)
 
@@ -21,6 +25,8 @@ class CefGlobal : public QObject {
   QString version() const;
   QString chromiumVersion() const;
   QString runtimeDir() const;
+  QString profileDir() const;
+  QString dataDir() const;
 
   // What a browser address bar does with typed text: "example.com" ->
   // "https://example.com", "/tmp/x.html" -> file URL. Returns an invalid URL

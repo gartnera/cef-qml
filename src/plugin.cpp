@@ -3,6 +3,7 @@
 #include "cefcontext.h"
 #include "cefwebview.h"
 #include "hotreload.h"
+#include "jsonstore.h"
 #include "requests.h"
 
 #include <QClipboard>
@@ -43,6 +44,14 @@ QString CefGlobal::chromiumVersion() const {
 
 QString CefGlobal::runtimeDir() const {
   return CefContext::instance()->runtimeDir();
+}
+
+QString CefGlobal::profileDir() const {
+  return CefContext::instance()->profileDir();
+}
+
+QString CefGlobal::dataDir() const {
+  return CefContext::instance()->dataDir();
 }
 
 QUrl CefGlobal::urlFromUserInput(const QString& input) const {
@@ -92,6 +101,7 @@ QString CefGlobal::environment(const QString& name) const {
 void CefQmlPlugin::registerTypes(const char* uri) {
   qmlRegisterType<CefWebView>(uri, 1, 0, "CefWebView");
   qmlRegisterType<HotReload>(uri, 1, 0, "HotReload");
+  qmlRegisterType<JsonStore>(uri, 1, 0, "JsonStore");
   const QString why = QStringLiteral("created by CefWebView");
   qmlRegisterUncreatableType<CefJavaScriptDialog>(uri, 1, 0, "CefJavaScriptDialog", why);
   qmlRegisterUncreatableType<CefPermissionRequest>(uri, 1, 0, "CefPermissionRequest", why);

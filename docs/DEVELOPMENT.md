@@ -14,6 +14,8 @@ Notes for contributors (human or agent). Read this before changing anything.
   - `requests.*` — objects handed to QML for decisions (JS dialogs,
     permissions, file dialogs, downloads).
   - `hotreload.*` — `HotReload` item (live QML reloading).
+  - `jsonstore.*` — `JsonStore` (persisted JSON documents under
+    `Cef.dataDir`; the storage of userscripts and future app state).
   - `plugin.*` — type registration and the `Cef` singleton.
 - `CefQml/Components/` — pure-QML module `CefQml.Components`: reusable browser
   building blocks (`WebTabs`, `TabStrip`, `NavigationBar`, `AddressField`,

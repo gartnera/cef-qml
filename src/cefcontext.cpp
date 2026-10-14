@@ -141,7 +141,7 @@ QString CefContext::locateRuntimeDir() {
   return {};
 }
 
-QString CefContext::chooseCacheDir() {
+QString CefContext::configuredCacheDir() {
   QString dir = envString("CEF_QML_CACHE_DIR");
   if (dir.isEmpty()) {
     QString app = QCoreApplication::applicationName();
@@ -150,6 +150,21 @@ QString CefContext::chooseCacheDir() {
     dir = QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation) +
           QStringLiteral("/cef-qml/") + app;
   }
+  return QDir::cleanPath(QDir(dir).absolutePath());
+}
+
+QString CefContext::profileDir() {
+  if (m_profileDir.isEmpty())
+    m_profileDir = chooseCacheDir();
+  return m_profileDir;
+}
+
+QString CefContext::dataDir() {
+  return configuredCacheDir() + QStringLiteral("/cefqml");
+}
+
+QString CefContext::chooseCacheDir() {
+  QString dir = configuredCacheDir();
 
   // Chromium allows one browser process per profile directory. If another
   // live process holds it (e.g. a second instance of the same app), fall back to a
@@ -245,7 +260,7 @@ bool CefContext::ensureInitialized() {
   CefString(&settings.locales_dir_path) =
       (m_runtimeDir + QStringLiteral("/locales")).toStdString();
 
-  const QString cacheDir = chooseCacheDir();
+  const QString cacheDir = profileDir();
   CefString(&settings.root_cache_path) = cacheDir.toStdString();
   CefString(&settings.cache_path) = cacheDir.toStdString();
 
