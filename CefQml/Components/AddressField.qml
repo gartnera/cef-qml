@@ -3,6 +3,9 @@ import CefQml
 
 // URL/search field bound to a CefWebView. Shows the page URL while not being
 // edited; Enter navigates (typed text that is not an address is searched).
+// Escape restores the page URL; pressed again (or with nothing edited) it
+// returns focus to the page. With `suggestions` (an AddressSuggestions, which
+// sets itself here) keys go to the popup first.
 Rectangle {
     id: field
     property CefWebView view
@@ -12,6 +15,8 @@ Rectangle {
     // URLs shown as an empty field (e.g. the new-tab page).
     property var isInternalUrl: url => false
     property alias input: input
+    // AddressSuggestions handling keys and edits (set by AddressSuggestions).
+    property var suggestions: null
     // Emitted after navigating; the default handler focuses the page.
     signal navigated(url url)
 
@@ -25,6 +30,17 @@ Rectangle {
         const u = Cef.urlFromUserInput(text)
         if (u.toString() !== "") return u
         return searchUrl.replace("%s", encodeURIComponent(text.trim()))
+    }
+
+    // Loads `target` (a url) in `view`, focuses the page and emits
+    // navigated(). The same URL again reloads.
+    function go(target) {
+        if (!field.view) return
+        const dec = u => { u = String(u); try { return decodeURIComponent(u) } catch (e) { return u } }
+        if (dec(field.view.url) === dec(target)) field.view.reload()
+        else field.view.url = target
+        field.view.forceActiveFocus(Qt.OtherFocusReason)
+        field.navigated(target)
     }
 
     function focusAndSelect() {
@@ -70,14 +86,23 @@ Rectangle {
         }
         onAccepted: {
             if (!field.view || text.trim() === "") return
-            const target = field.urlFor(text)
-            field.view.url = target
-            field.view.forceActiveFocus(Qt.OtherFocusReason)
-            field.navigated(target)
+            field.go(field.urlFor(text))
         }
-        Keys.onEscapePressed: {
-            text = field._display()
-            if (field.view) field.view.forceActiveFocus(Qt.OtherFocusReason)
+        Keys.onPressed: event => {
+            if (field.suggestions && field.suggestions.handleKey(event)) {
+                event.accepted = true
+                return
+            }
+            if (event.key === Qt.Key_Escape) {
+                const shown = field._display()
+                if (text !== shown) {
+                    text = shown
+                    selectAll()
+                } else if (field.view) {
+                    field.view.forceActiveFocus(Qt.OtherFocusReason)
+                }
+                event.accepted = true
+            }
         }
 
         Text {

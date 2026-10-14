@@ -46,6 +46,17 @@ FocusScope {
     readonly property bool userScriptManagerVisible: userScriptOverlay.visible
     // Offer to install pages whose URL ends in .user.js (http(s) and file:).
     property bool offerUserScriptInstall: true
+    // Browsing history of every tab (HistoryStore, Cef.dataDir/history.json;
+    // the new-tab page is not recorded). Set to null to disable history; set
+    // `historyStore.recording` to false for private browsing. Share one store
+    // between several Browser windows.
+    property QtObject historyStore: HistoryStore {
+        path: "history.json"
+        ignoreUrl: u => browser.isNewTabUrl(u)
+    }
+    // The address bar's drop-down (AddressSuggestions): add your own
+    // sources with addressSuggestions.addProvider(...).
+    property alias addressSuggestions: suggestions
 
     signal lastTabClosed()
 
@@ -173,6 +184,7 @@ FocusScope {
             anchors.fill: parent
             homeUrl: browser.homeUrl
             userScriptStore: browser.userScriptStore
+            historyStore: browser.historyStore
             onLastTabClosed: browser.keepOneTab ? browser.newTab() : browser.lastTabClosed()
             onCurrentViewChanged: if (currentView && browser.activeFocus && !navBar.addressField.input.activeFocus)
                                       currentView.forceActiveFocus()
@@ -244,6 +256,23 @@ FocusScope {
         tabs: webTabs
         keyBindings: keys
         onOpenLinkInNewTab: url => ctl.openTab(url, { background: true, index: webTabs.currentIndex + 1 })
+    }
+
+    AddressSuggestions {
+        id: suggestions
+        objectName: "addressSuggestions"
+        addressField: navBar.addressField
+        historyStore: browser.historyStore
+        tabs: webTabs
+        navigate: (url, newTab) => {
+            if (!newTab) return navBar.addressField.go(url)
+            const v = ctl.openTab(url)
+            if (v) v.forceActiveFocus(Qt.OtherFocusReason)
+        }
+        selectTab: view => {
+            ctl.selectTab(view)
+            view.forceActiveFocus(Qt.OtherFocusReason)
+        }
     }
 
     Loader {

@@ -477,7 +477,7 @@ through `Style`, or copy one as the starting point for your own.
 
 | Component | Purpose and key API |
 |---|---|
-| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts), `userScriptManager` (the `UserScriptManager` overlay), `userScriptManagerVisible`, `offerUserScriptInstall` (default true). Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`, `showUserScripts()`, `hideUserScripts()`, `reviewUserScript(url)`, `isUserScriptUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
+| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts), `userScriptManager` (the `UserScriptManager` overlay), `userScriptManagerVisible`, `offerUserScriptInstall` (default true), `historyStore` (a `HistoryStore` on `history.json`; null disables history), `addressSuggestions` (the address bar's `AddressSuggestions`). Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`, `showUserScripts()`, `hideUserScripts()`, `reviewUserScript(url)`, `isUserScriptUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
 | `BrowserController` | Non-visual programmatic API over a `WebTabs` (`tabs`): navigation that reports its result, tab helpers, zoom, recently closed tabs. See below. |
 | `BrowserAction` | A named command: `name` (`"tab.new"`), `text`, `description`, `category`, `enabled`, `checkable`/`checked`, `defaultShortcuts`, signal `triggered(args)`, `trigger(args)`. |
 | `ActionRegistry` | A set of `BrowserAction`s looked up and run by name: `model` (for menus or a command palette), `count`, `action(name)`, `has(name)`, `names()`, `trigger(name, args)`, `add(action or { name, text, defaultShortcuts, onTriggered })`, `remove(nameOrAction)`, signal `actionTriggered(name, args)`. |
@@ -488,7 +488,8 @@ through `Style`, or copy one as the starting point for your own.
 | `WebTabs` | Non-visual tab manager: one `CefWebView` per tab, stacked, only the current one visible. `views`, `count`, `currentIndex`, `currentView`, `homeUrl`, `viewDelegate` (a `Component` deriving from `CefWebView`), `openPopupsInNewTabs`, `closeOnRequest`, `userScriptStore` (a `UserScriptStore` injected into every tab), `historyStore` (a `HistoryStore` recording every tab's visits). `openTab(url, background, index)`, `closeTab(index)`, `moveTab(from, to)`, `closeAll()`, `indexOf(view)`, `urls()` / `restore(urls, current)` for sessions. Signals `tabOpened`, `tabClosed(view, index)`, `lastTabClosed`, `sessionChanged`, `contextMenuRequested(view, ...)`; set `interceptJavaScriptDialogs` / `interceptPermissions` / `interceptFileDialogs` / `interceptDownloads` to receive every tab's requests as `javaScriptDialogRequested(view, dialog)`, `permissionRequested(view, request)`, `fileDialogRequested(view, request)`, `downloadRequested(view, download)`. |
 | `TabStrip` | Horizontal tab bar for a `WebTabs` (`tabs`, required): click selects, middle click or × closes, + emits `newTabRequested()`. `maxTabWidth`, `minTabWidth`. |
 | `NavigationBar` | Back / forward / reload-stop, an `AddressField` and a load-progress line for `view`. `addressField`, `searchUrl`; children are placed after the address field (e.g. a menu button). |
-| `AddressField` | URL/search field bound to `view`: shows the page URL while not edited; Enter navigates, non-addresses are searched with `searchUrl` (`%s` = query). `text`, `input`, `isInternalUrl` (urls shown as an empty field), `urlFor(text)`, `focusAndSelect()`, signal `navigated(url)`. |
+| `AddressField` | URL/search field bound to `view`: shows the page URL while not edited; Enter navigates, non-addresses are searched with `searchUrl` (`%s` = query); Escape restores the page URL, a second Escape (or one with nothing edited) returns focus to the page. `text`, `input`, `isInternalUrl` (urls shown as an empty field), `suggestions` (set by `AddressSuggestions`), `urlFor(text)`, `go(url)` (load in `view` and focus it; the same URL reloads), `focusAndSelect()`, signal `navigated(url)`. |
+| `AddressSuggestions` | Drop-down and inline autocompletion for an `AddressField` from open tabs, a `HistoryStore` and your own providers. See [Address bar suggestions](#address-bar-suggestions). |
 | `FindBar` | Find-in-page bar for `view`: Enter next, Shift+Enter previous, Escape closes. `text`, `matchCount`, `activeMatch`, `matchCase`, `open()`, `close()`, `findNext(forward)`, signal `closeRequested()`. |
 | `RequestOverlay` | Shows JavaScript dialogs and permission prompts of a `WebTabs` (`tabs`, required) as an in-page card; requests of background tabs wait until their tab is shown. `rememberPermissions` (per origin and permission, this session). |
 | `ContextMenu` | Right-click menu for a `WebTabs` (`tabs`, required), drawn inside the window: open/copy link, undo/redo/cut/copy/paste/select all in editable fields, copy selection, otherwise back/forward/reload. Signal `openLinkInNewTab(url)`; `show(view, x, y, linkUrl, selectedText, editable)`, `close()`. |
@@ -499,6 +500,68 @@ through `Style`, or copy one as the starting point for your own.
 
 `Browser` answers file dialogs with Qt's `FileDialog` when the
 `QtQuick.Dialogs` module is installed (it is optional).
+
+### Address bar suggestions
+
+`AddressSuggestions` turns an `AddressField` into an omnibox. `Browser` sets
+one up (`browser.addressSuggestions`) with its `historyStore` and tabs:
+
+- While typing, a popup lists what Enter does with the text first (the
+  inline completion, the typed URL or a search), then open tabs ("Switch to
+  tab"), history matches (ranked by `HistoryStore.search()`) and a
+  "search for ..." entry, without duplicate URLs.
+- **Inline autocompletion**: typing at the end of the text appends the best
+  history host (`exa` -> `exa|mple.com/`, the completed part selected) or,
+  once the text contains a `/`, a full URL. Typing on keeps completing,
+  Backspace / Delete remove the completion without completing again, Enter
+  accepts it.
+- **Keys**: Up / Down select (the field keeps the typed text), Enter opens,
+  Alt+Enter opens in a new tab, Shift+Delete removes the selected history
+  entry, Escape closes the popup and drops the completion; a second Escape
+  restores the page URL, a third returns to the page.
+- **Mouse**: moving over an entry selects it, click opens, middle click (or
+  Ctrl+click) opens in a new tab, × removes a history entry.
+- Opening a URL or history entry from the address bar counts as typed
+  (`HistoryStore.markTyped`), which ranks it higher later.
+
+Sources are **providers**: a function `(text, ctx) => items` or an object
+`{ suggest(text, ctx), remove(item) }`, returning an array or a Promise of
+one. `ctx` is `{ text, view, tabs, historyStore, limit }`. An item is
+`{ type, title, url, icon, subtitle, action, remove }`: `type` picks the
+glyph (`"url"`, `"search"`, `"history"`, `"tab"`, `"bookmark"`, anything
+else), `action(item, newTab)` replaces navigating to `url`, and `remove(item)`
+(or the provider's `remove`) makes it removable with Shift+Delete.
+
+```qml
+Browser {
+    id: browser
+    Component.onCompleted: {
+        // Bookmarks before history:
+        addressSuggestions.addProvider({
+            suggest: text => myBookmarks.filter(b => b.title.toLowerCase().includes(text.toLowerCase()))
+                                        .map(b => ({ type: "bookmark", title: b.title, url: b.url })),
+        }, 1)
+        // A command:
+        addressSuggestions.addProvider(text => text === "history"
+            ? [{ type: "command", title: "Show history", action: () => browser.trigger("history.show") }] : [])
+    }
+}
+```
+
+| Member | Description |
+|---|---|
+| `addressField`, `historyStore`, `tabs` | The field (required), the history and the `WebTabs` to suggest from. |
+| `providers` | The provider list; default `[tabProvider, historyProvider, searchProvider]` (the built-ins are properties too). `addProvider(provider, index)`, `removeProvider(provider)`. |
+| `maxItems`, `rowHeight` | Popup size (default 8 entries of 32 px). |
+| `inlineCompletion`, `completer` | Inline autocompletion on/off; `completer(text)` returns `{ text, url }` (default `historyStore.inlineCompletion`). |
+| `navigate(url, newTab)`, `selectTab(view)` | How entries are opened (functions, replaceable; `Browser` routes them through its controller). |
+| `items`, `currentIndex`, `userText`, `completion`, `opened` | State (`userText`: the text without the completion). |
+| `update()`, `close()`, `openItem(index, newTab)`, `removeItem(index)`, `rowAt(index)`, `handleKey(event)` | `AddressField` calls `handleKey` for each key press; `update()` runs on every edit. |
+| signal `activated(item, newTab)` | An entry was opened. |
+
+The popup is placed under the field inside the suggestions' `parent`: put
+`AddressSuggestions` in an item that covers the page area (e.g. the window's
+content item), declared after the web views so it stacks above them.
 
 ### Userscripts
 

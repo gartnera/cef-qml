@@ -301,7 +301,6 @@ Item {
 
         function test_12_large_history() {
             const now = Date.now()
-            const t0 = Date.now()
             for (let i = 0; i < 5000; ++i)
                 store.recordVisit("https://site" + (i % 500) + ".test/page/" + i, { title: "Page " + i, time: now - i * 1000 })
             const t1 = Date.now()
@@ -311,7 +310,304 @@ Item {
             verify(r.length > 0)
             verify(store.inlineCompletion("site49"))
             verify(t2 - t1 < 200, "search over 5000 entries took " + (t2 - t1) + " ms")
-            console.log("history: 5000 inserts", t1 - t0, "ms, search", t2 - t1, "ms")
+        }
+    }
+
+    // --- Browser: address-bar suggestions -------------------------------------
+
+    Browser {
+        id: browser
+        anchors.fill: parent
+        focus: true
+        searchUrl: "data:text/html,<title>search</title><p id=q>%s</p>"
+    }
+
+    TestCase {
+        name: "AddressSuggestions"
+        when: windowShown
+
+        property var history: browser.historyStore
+        property var sug: browser.addressSuggestions
+
+        function find(name) {
+            const item = findChild(browser, name)
+            verify(item, "no child " + name)
+            return item
+        }
+        function view() { return browser.currentView }
+        function field() { return find("addressInput") }
+        function center(item) { return item.mapToItem(root, item.width / 2, item.height / 2) }
+        function click(item, button) {
+            const p = center(item)
+            mouseClick(root, p.x, p.y, button || Qt.LeftButton)
+        }
+        function focusField() {
+            if (!field().activeFocus) {
+                view().forceActiveFocus()
+                keyClick(Qt.Key_L, Qt.ControlModifier)
+            }
+            tryVerify(() => field().activeFocus, 2000, "Ctrl+L focuses the address field")
+        }
+        function type(text) {
+            for (const ch of text) keyClick(ch)
+        }
+        function resetTabs(title) {
+            mouseMove(root, root.width - 5, root.height - 5)
+            browser.tabs.restore([page(title || "start")], 0)
+            tryCompare(browser, "title", title || "start", 10000)
+            view().forceActiveFocus()
+            history.clear()
+        }
+        function types() { return sug.items.map(i => i.type) }
+        // Not find("suggestionN"): replaced rows linger until deferred deletion.
+        function row(i) {
+            const r = sug.rowAt(i)
+            verify(r, "no suggestion row " + i)
+            return r
+        }
+
+        function initTestCase() {
+            tryCompare(browser.tabs, "count", 1, 10000)
+            tryCompare(browser, "title", "New Tab", 15000)
+        }
+
+        function test_01_browser_records_history() {
+            verify(history, "Browser creates a HistoryStore")
+            verify(history.isAttached(view()))
+            verify(history.filePath.endsWith("/history.json"))
+            resetTabs()
+            browser.navigate(page("Recorded"))
+            tryCompare(browser, "title", "Recorded", 10000)
+            tryVerify(() => history.contains(page("Recorded")), 5000)
+            // The new-tab page is internal.
+            browser.newTab()
+            tryCompare(browser, "title", "New Tab", 10000)
+            wait(200)
+            for (let i = 0; i < history.count; ++i)
+                verify(!browser.isNewTabUrl(history.get(i).url), "new-tab page recorded")
+            compare(history.count, 1)
+        }
+
+        function test_02_keyboard_navigation_and_enter() {
+            resetTabs()
+            history.recordVisit(page("Alpha one"), { title: "Alpha one" })
+            history.recordVisit(page("Alpha two"), { title: "Alpha two" })
+            history.recordVisit(page("Beta"), { title: "Beta" })
+            focusField()
+            type("alpha")
+            tryVerify(() => sug.visible, 2000, "popup opens while typing")
+            compare(field().text, "alpha", "no inline completion for a non-address")
+            compare(types(), ["search", "history", "history"])
+            compare(sug.items[0].url, "data:text/html,<title>search</title><p id=q>%s</p>".replace("%s", "alpha"))
+            compare(sug.currentIndex, 0)
+            verify(row(2))
+            keyClick(Qt.Key_Down)
+            keyClick(Qt.Key_Down)
+            compare(sug.currentIndex, 2)
+            keyClick(Qt.Key_Down)
+            compare(sug.currentIndex, 2, "stops at the last entry")
+            keyClick(Qt.Key_Up)
+            compare(sug.currentIndex, 1)
+            const target = sug.items[1]
+            compare(field().text, "alpha", "arrowing keeps the typed text")
+            keyClick(Qt.Key_Return)
+            verify(!sug.visible)
+            tryCompare(browser, "title", target.title, 10000)
+            tryVerify(() => view().activeFocus, 2000, "the page gets focus")
+            tryVerify(() => history.entry(target.url).visitCount === 2, 5000)
+            compare(history.entry(target.url).typedCount, 1, "opened from the address bar: typed")
+
+            // Enter on the default entry searches.
+            focusField()
+            type("alpha")
+            tryVerify(() => sug.visible, 2000)
+            keyClick(Qt.Key_Return)
+            tryCompare(browser, "title", "search", 10000)
+        }
+
+        function test_03_escape() {
+            resetTabs()
+            history.recordVisit(page("Alpha one"))
+            const url = field().text
+            focusField()
+            type("alp")
+            tryVerify(() => sug.visible, 2000)
+            keyClick(Qt.Key_Escape)
+            verify(!sug.visible, "first Escape closes the popup")
+            compare(field().text, "alp")
+            verify(field().activeFocus)
+            keyClick(Qt.Key_Escape)
+            compare(field().text, url, "second Escape restores the URL")
+            compare(field().selectedText, url)
+            verify(field().activeFocus)
+            keyClick(Qt.Key_Escape)
+            tryVerify(() => view().activeFocus, 2000, "third Escape returns to the page")
+            // Focus loss closes the popup.
+            focusField()
+            type("alp")
+            tryVerify(() => sug.visible, 2000)
+            view().forceActiveFocus()
+            verify(!sug.visible)
+        }
+
+        function test_04_inline_autocomplete() {
+            resetTabs()
+            history.recordVisit("https://example.com/foo", { title: "Example" })
+            history.recordVisit("https://example.com/bar", { title: "Example bar" })
+            focusField()
+            type("exa")
+            compare(field().text, "example.com/")
+            compare(field().selectedText, "mple.com/", "the completed part is selected")
+            compare(sug.items[0].url, "https://example.com/")
+            compare(sug.items[0].type, "history")
+            type("m")
+            compare(field().text, "example.com/", "typing over the completion keeps completing")
+            compare(field().selectedText, "ple.com/")
+            keyClick(Qt.Key_Backspace)
+            compare(field().text, "exam", "Backspace removes the completion")
+            compare(field().selectedText, "")
+            keyClick(Qt.Key_Backspace)
+            compare(field().text, "exa", "and does not complete again")
+            type("m")
+            compare(field().text, "example.com/")
+            keyClick(Qt.Key_Delete)
+            compare(field().text, "exam", "Delete removes the completion too")
+            type("ple.com/f")
+            compare(field().text, "example.com/foo", "with a path: completes the URL")
+            compare(field().selectedText, "oo")
+            keyClick(Qt.Key_Escape)
+            compare(field().text, "example.com/f", "Escape drops the completion")
+            keyClick(Qt.Key_Escape)
+            keyClick(Qt.Key_Escape)
+            tryVerify(() => view().activeFocus, 2000)
+
+            // Enter accepts the completion (a data: URL, no network).
+            history.recordVisit(page("Gamma page"))
+            focusField()
+            type("data:text/html,<title>ga")
+            compare(field().text, "data:text/html,<title>gamma page</title><body style='margin:0'>", "typed case kept")
+            keyClick(Qt.Key_Return)
+            tryCompare(browser, "title", "Gamma page", 10000)
+            tryVerify(() => history.entry(page("Gamma page")).typedCount === 1, 5000)
+            sug.inlineCompletion = false
+            focusField()
+            type("exa")
+            compare(field().text, "exa", "inlineCompletion: false")
+            sug.inlineCompletion = true
+            keyClick(Qt.Key_Escape)
+            keyClick(Qt.Key_Escape)
+            keyClick(Qt.Key_Escape)
+        }
+
+        function test_05_switch_to_tab() {
+            resetTabs("Tab One")
+            const other = browser.openTab(page("Other Zeta"), { background: true })
+            tryCompare(other, "title", "Other Zeta", 10000)
+            compare(browser.tabs.currentIndex, 0)
+            history.clear()
+            focusField()
+            type("zeta")
+            tryVerify(() => sug.visible, 2000)
+            compare(types(), ["search", "tab"])
+            compare(sug.items[1].subtitle, "Switch to tab")
+            keyClick(Qt.Key_Down)
+            keyClick(Qt.Key_Return)
+            tryCompare(browser.tabs, "currentIndex", 1, 2000)
+            compare(browser.tabs.count, 2, "no new tab")
+            tryVerify(() => other.activeFocus, 2000)
+            // The current tab is not offered; mouse click selects too.
+            focusField()
+            type("tab one")
+            tryVerify(() => sug.visible, 2000)
+            compare(types(), ["search", "tab"])
+            click(row(1))
+            tryCompare(browser.tabs, "currentIndex", 0, 2000)
+            compare(browser.tabs.count, 2)
+        }
+
+        function test_06_custom_provider_and_mouse() {
+            resetTabs()
+            let actions = 0
+            const bookmarks = {
+                suggest: text => text.startsWith("bm") ? [
+                    { type: "bookmark", title: "My bookmark", url: page("Bookmarked") },
+                    { type: "command", title: "Run command", action: () => actions++ }
+                ] : []
+            }
+            const later = text => new Promise(resolve => resolve(text.startsWith("bm") ? [{ title: "Async result", url: page("Async") }] : []))
+            sug.addProvider(bookmarks, 0)
+            sug.addProvider(later)
+            try {
+                focusField()
+                type("bm")
+                tryVerify(() => sug.visible, 2000)
+                tryVerify(() => types().join() === "search,bookmark,command,custom", 2000, types().join())
+                compare(sug.items[1].title, "My bookmark")
+                // Hover moves the selection; click opens.
+                const row2 = row(2)
+                const p = center(row2)
+                mouseMove(root, p.x, p.y - 8)
+                mouseMove(root, p.x, p.y)
+                tryCompare(sug, "currentIndex", 2, 2000)
+                mouseClick(root, p.x, p.y)
+                compare(actions, 1, "action items run their action")
+                verify(!sug.visible)
+                compare(field().text, field().selectedText, "and the URL is shown again, selected")
+                focusField()
+                type("bm")
+                tryVerify(() => sug.items.length === 4, 2000)
+                click(row(1))
+                tryCompare(browser, "title", "Bookmarked", 10000)
+                tryVerify(() => history.contains(page("Bookmarked")), 5000)
+                compare(history.entry(page("Bookmarked")).typedCount, 0, "provider items are not 'typed'")
+                // Middle click / Alt+Enter: new tab.
+                focusField()
+                type("bm")
+                tryVerify(() => sug.items.length === 4, 2000)
+                click(row(3), Qt.MiddleButton)
+                tryCompare(browser.tabs, "count", 2, 5000)
+                tryCompare(browser, "title", "Async", 10000)
+                focusField()
+                type("bm")
+                tryVerify(() => sug.items.length === 4, 2000)
+                keyClick(Qt.Key_Down)
+                keyClick(Qt.Key_Return, Qt.AltModifier)
+                tryCompare(browser.tabs, "count", 3, 5000)
+                tryCompare(browser, "title", "Bookmarked", 10000)
+            } finally {
+                sug.removeProvider(bookmarks)
+                sug.removeProvider(later)
+            }
+            compare(sug.providers.length, 3)
+        }
+
+        function test_07_shift_delete_removes_history() {
+            resetTabs()
+            history.recordVisit(page("Removable one"))
+            history.recordVisit(page("Removable two"))
+            focusField()
+            type("removable")
+            tryVerify(() => sug.visible, 2000)
+            compare(types(), ["search", "history", "history"])
+            keyClick(Qt.Key_Down)
+            const url = sug.items[1].url
+            keyClick(Qt.Key_Delete, Qt.ShiftModifier)
+            verify(!history.contains(url))
+            compare(types(), ["search", "history"])
+            compare(sug.currentIndex, 1)
+            compare(field().text, "removable", "text unchanged")
+            // Not removable: the search entry.
+            keyClick(Qt.Key_Up)
+            keyClick(Qt.Key_Delete, Qt.ShiftModifier)
+            compare(types(), ["search", "history"])
+            // The × button.
+            const x = findChild(row(1), "suggestionRemove1")
+            sug.currentIndex = 1
+            tryVerify(() => x.visible, 2000)
+            click(x)
+            compare(history.count, 0)
+            compare(types(), ["search"])
+            keyClick(Qt.Key_Escape)
         }
     }
 }

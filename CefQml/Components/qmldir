@@ -4,6 +4,7 @@ singleton Style 1.0 Style.qml
 WebTabs 1.0 WebTabs.qml
 TabStrip 1.0 TabStrip.qml
 AddressField 1.0 AddressField.qml
+AddressSuggestions 1.0 AddressSuggestions.qml
 NavigationBar 1.0 NavigationBar.qml
 FindBar 1.0 FindBar.qml
 RequestOverlay 1.0 RequestOverlay.qml
