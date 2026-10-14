@@ -1,5 +1,6 @@
 import QtQuick
 import CefQml
+import "PageTools.js" as PageTools
 
 // Non-visual, programmatic API over a WebTabs: navigate, open/close/select
 // tabs, history, zoom, tab lookup, and waiting for loads. `Browser` exposes
@@ -19,6 +20,8 @@ QtObject {
     // Typed text that is not an address is searched; "%s" is the query.
     property string searchUrl: "https://duckduckgo.com/?q=%s"
     property real zoomStep: 0.1
+    // scrollPage("up" / "down" / "left" / "right") moves this many CSS pixels.
+    property real scrollStep: 60
     // How many closed tabs closedTabs keeps.
     property int closedTabsLimit: 25
     // URLs not worth remembering when their tab closes (e.g. a new-tab page).
@@ -182,6 +185,31 @@ QtObject {
     function zoomOut(tab) { const v = viewAt(tab); if (v) v.zoomFactor -= zoomStep; return !!v }
     function resetZoom(tab) { const v = viewAt(tab); if (v) v.zoomFactor = 1; return !!v }
 
+    // ---- keyboard page navigation -------------------------------------------
+
+    // Scrolls the page of `tab` like the keyboard does, without giving it
+    // the focus: `how` is "up", "down", "left", "right" (scrollStep CSS px,
+    // or opts.amount), "pageUp", "pageDown" (opts.pages of the visible
+    // height, default 0.9), "top" or "bottom". It moves the scrollable
+    // element around the focused element or the middle of the page, else
+    // the document. opts.smooth animates it. Returns a Promise of { ok,
+    // moved, element ("document" or the tag name), x, y (its new scroll
+    // position) } (ok false with an `error` without a page).
+    function scrollPage(how, opts, tab) {
+        const v = viewAt(tab)
+        const o = Object.assign({ amount: scrollStep }, opts || {})
+        return _pageCall(v, "scroll", [how, o])
+    }
+    // Focuses a text field of the page of `tab` (and the view): the first
+    // visible one, or with opts.next / opts.previous the one after / before
+    // the focused one, or opts.index; opts.select selects its text (else the
+    // caret goes to the end). Returns a Promise of { ok, count, index }.
+    function focusInput(opts, tab) {
+        const v = viewAt(tab)
+        if (v) v.forceActiveFocus(Qt.OtherFocusReason)
+        return _pageCall(v, "focusInput", [opts || {}])
+    }
+
     // ---- tabs --------------------------------------------------------------
 
     // The view of `tab` (index, negative from the end, or view; undefined:
@@ -299,6 +327,13 @@ QtObject {
         const timer = _timerComponent.createObject(ctl, { interval: ms })
         timer.triggered.connect(fn)
         return timer
+    }
+    function _pageCall(view, name, args) {
+        if (!view || !view.ready) return Promise.resolve({ ok: false, error: "noPage" })
+        return new Promise(resolve => PageTools.call(view, name, args, (r, err) => {
+            if (err !== undefined || !r) resolve({ ok: false, error: err !== undefined ? String(err) : "failed" })
+            else resolve(r)
+        }))
     }
     function _settled(result, callback) {
         if (callback) {

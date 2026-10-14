@@ -106,6 +106,9 @@ FocusScope {
     // shown.
     property alias commandPalette: cmdPalette
     readonly property bool commandPaletteVisible: cmdPalette.visible
+    // Keyboard link hints over the current tab (LinkHints; actions
+    // "hints.open": Alt+F, "hints.newTab": Alt+Shift+F, "hints.copyLink").
+    property alias linkHints: hintsOverlay
 
     signal lastTabClosed()
 
@@ -312,6 +315,12 @@ FocusScope {
             tabs: webTabs
         }
 
+        LinkHints {
+            id: hintsOverlay
+            anchors.fill: parent
+            view: webTabs.currentView
+        }
+
         // Manager panels; opening one closes the other.
         PanelOverlay {
             id: userScriptOverlay
@@ -469,6 +478,7 @@ FocusScope {
         recentlyClosedMenu: closedMenu
         sessionStore: browser.sessionStore
         commandPalette: cmdPalette
+        linkHints: hintsOverlay
     }
 
     // Install prompt for *.user.js pages loaded in the current tab.

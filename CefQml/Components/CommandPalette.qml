@@ -96,7 +96,7 @@ FocusScope {
     property var categoryNames: ({
         tab: "Tabs", session: "Session", nav: "Navigation", address: "Address bar", page: "Page",
         zoom: "Zoom", edit: "Edit", window: "Window", userscripts: "Userscripts", history: "History",
-        bookmark: "Bookmarks", bookmarks: "Bookmarks", palette: "Palette"
+        bookmark: "Bookmarks", bookmarks: "Bookmarks", palette: "Palette", hints: "Link hints"
     })
     // Recently run commands, most recent first, saved to this file under
     // Cef.dataDir ("" keeps them in memory). Give each palette of a process

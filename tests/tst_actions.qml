@@ -111,7 +111,10 @@ Item {
             for (const n of ["tab.new", "tab.close", "tab.next", "tab.previous", "tab.select", "tab.reopenClosed",
                              "nav.back", "nav.forward", "nav.reload", "nav.reloadHard", "nav.stop", "nav.home",
                              "address.focus", "page.find", "page.findNext", "page.findPrevious",
-                             "zoom.in", "zoom.out", "zoom.reset", "window.fullscreen", "test.custom", "test.steal"])
+                             "zoom.in", "zoom.out", "zoom.reset", "window.fullscreen", "test.custom", "test.steal",
+                             "hints.open", "hints.newTab", "hints.copyLink", "hints.focusInput",
+                             "page.scrollDown", "page.scrollUp", "page.scrollPageDown", "page.scrollPageUp",
+                             "page.scrollTop", "page.scrollBottom", "page.scrollLeft", "page.scrollRight"])
                 verify(acts.has(n), n)
             compare(acts.action("tab.new").text, "New tab")
             compare(acts.action("tab.new").category, "tab")
@@ -473,6 +476,24 @@ Item {
             browser.keyBindings.enabled = true
             keyClick(Qt.Key_N, Qt.ControlModifier)
             tryCompare(browser.tabs, "count", 4, 5000)
+        }
+
+        // Browser's LinkHints over the current tab (see tst_linkhints.qml).
+        function test_16_browser_link_hints() {
+            browser.tabs.restore([page("links", "<a href='#a' onclick='document.title = \"clicked:\" + event.isTrusted'>A link</a>")], 0)
+            tryCompare(browser, "title", "links", 10000)
+            compare(evaluate("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))"), 1)
+            view().forceActiveFocus()
+            compare(browser.keyBindings.sequencesFor("hints.open"), ["Alt+F"])
+            compare(browser.keyBindings.sequencesFor("hints.newTab"), ["Alt+Shift+F"])
+            compare(browser.linkHints.view, view())
+            keyClick(Qt.Key_F, Qt.AltModifier)
+            tryVerify(() => browser.linkHints.active && !browser.linkHints.busy, 10000)
+            compare(browser.linkHints.hints.length, 1)
+            keyClick(browser.linkHints.labels[0])
+            tryCompare(browser, "title", "clicked:true", 5000)
+            verify(!browser.linkHints.active)
+            verify(view().activeFocus)
         }
     }
 }

@@ -20,6 +20,7 @@ BrowserActions 1.0 BrowserActions.qml
 UserScriptStore 1.0 UserScriptStore.qml
 UserScriptManager 1.0 UserScriptManager.qml
 PanelOverlay 1.0 PanelOverlay.qml
+LinkHints 1.0 LinkHints.qml
 HistoryView 1.0 HistoryView.qml
 BookmarkButton 1.0 BookmarkButton.qml
 BookmarksBar 1.0 BookmarksBar.qml

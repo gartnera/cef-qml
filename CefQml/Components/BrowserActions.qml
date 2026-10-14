@@ -20,7 +20,10 @@ import CefQml
 // "visible") it flips. tab.recentlyClosed needs a `recentlyClosedMenu`
 // (popup(item, x, y), e.g. a RecentlyClosedMenu) and session.restore a
 // `sessionStore` (a SessionStore with a saved session), palette.show a
-// `commandPalette` (a CommandPalette: toggle(prefix), visible). Declare more
+// `commandPalette` (a CommandPalette: toggle(prefix), visible) and the
+// hints.* actions but hints.focusInput a `linkHints` (a LinkHints). The
+// page.scroll* actions have no default keys (window-wide letters or arrows
+// would take them from pages; see the README's modal example). Declare more
 // BrowserActions inside, or replace one
 // by adding an action with the same name.
 ActionRegistry {
@@ -40,6 +43,7 @@ ActionRegistry {
     property var recentlyClosedMenu: null
     property var sessionStore: null
     property var commandPalette: null
+    property var linkHints: null
 
     readonly property CefWebView view: controller ? controller.currentView : null
     readonly property bool hasView: view !== null
@@ -220,6 +224,79 @@ ActionRegistry {
         name: "page.copyUrl"; text: "Copy page address"
         enabled: acts.hasView
         onTriggered: Cef.copyToClipboard(acts.view.url.toString())
+    }
+
+    // page.scroll*: scroll the page without giving it the focus (args: {
+    // amount } CSS px for the steps, { pages } for page steps, { smooth }).
+    BrowserAction {
+        name: "page.scrollDown"; text: "Scroll down"
+        enabled: acts.hasView; showInPalette: false
+        onTriggered: args => acts.controller.scrollPage("down", args)
+    }
+    BrowserAction {
+        name: "page.scrollUp"; text: "Scroll up"
+        enabled: acts.hasView; showInPalette: false
+        onTriggered: args => acts.controller.scrollPage("up", args)
+    }
+    BrowserAction {
+        name: "page.scrollLeft"; text: "Scroll left"
+        enabled: acts.hasView; showInPalette: false
+        onTriggered: args => acts.controller.scrollPage("left", args)
+    }
+    BrowserAction {
+        name: "page.scrollRight"; text: "Scroll right"
+        enabled: acts.hasView; showInPalette: false
+        onTriggered: args => acts.controller.scrollPage("right", args)
+    }
+    BrowserAction {
+        name: "page.scrollPageDown"; text: "Scroll down a page"
+        enabled: acts.hasView; showInPalette: false
+        onTriggered: args => acts.controller.scrollPage("pageDown", args)
+    }
+    BrowserAction {
+        name: "page.scrollPageUp"; text: "Scroll up a page"
+        enabled: acts.hasView; showInPalette: false
+        onTriggered: args => acts.controller.scrollPage("pageUp", args)
+    }
+    BrowserAction {
+        name: "page.scrollTop"; text: "Scroll to the top"
+        enabled: acts.hasView
+        onTriggered: args => acts.controller.scrollPage("top", args)
+    }
+    BrowserAction {
+        name: "page.scrollBottom"; text: "Scroll to the bottom"
+        enabled: acts.hasView
+        onTriggered: args => acts.controller.scrollPage("bottom", args)
+    }
+
+    // hints.*: keyboard link hints (args: LinkHints.show() options).
+    BrowserAction {
+        name: "hints.open"; text: "Follow a link"
+        description: "Label the clickable elements of the page; typing a label clicks it."
+        // Alt+F: not taken by Chromium's page keys (the File menu of other
+        // browsers, which have one); it does shadow accesskey "f" on Linux.
+        defaultShortcuts: ["Alt+F"]
+        enabled: acts.hasView && acts.linkHints !== null
+        onTriggered: args => acts.linkHints.show("open", args)
+    }
+    BrowserAction {
+        name: "hints.newTab"; text: "Open a link in a new tab"
+        description: "Label the links of the page; typing a label opens it in a background tab (args.background false: in front)."
+        defaultShortcuts: ["Alt+Shift+F"]
+        enabled: acts.hasView && acts.linkHints !== null
+        onTriggered: args => acts.linkHints.show("newTab", args)
+    }
+    BrowserAction {
+        name: "hints.copyLink"; text: "Copy a link address"
+        description: "Label the links of the page; typing a label copies its address."
+        enabled: acts.hasView && acts.linkHints !== null
+        onTriggered: args => acts.linkHints.show("copy", args)
+    }
+    BrowserAction {
+        name: "hints.focusInput"; text: "Focus a text field"
+        description: "Focus the first text field of the page, or the next one when one has the focus (args: BrowserController.focusInput() options)."
+        enabled: acts.hasView
+        onTriggered: args => acts.controller.focusInput(Object.keys(args).length > 0 ? args : { next: true })
     }
 
     // window.*
