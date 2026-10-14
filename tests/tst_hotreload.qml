@@ -97,4 +97,61 @@ Item {
             compare(hot.item.objectName, "v3")
         }
     }
+
+    // The reference app (dev.qml) keeps its tabs across reloads through its
+    // session file (Cef.dataDir/session.json, shared with other suites).
+    function page(t) { return "data:text/html," + encodeURIComponent("<title>" + t + "</title>") }
+    Component { id: jsonFile; JsonStore { autoSave: false; path: "session.json" } }
+    function resetSession() {
+        const f = jsonFile.createObject(root)
+        f.data = {}
+        const ok = f.save()
+        f.destroy()
+        return ok
+    }
+    Loader { id: appLoader; anchors.fill: parent; active: false
+        sourceComponent: HotReload { watch: false; source: Qt.resolvedUrl("../examples/browser/BrowserApp.qml") } }
+
+    TestCase {
+        name: "BrowserAppReload"
+        when: windowShown
+
+        function test_reload_keeps_tabs() {
+            verify(resetSession())
+            appLoader.active = true
+            const hot = appLoader.item
+            tryVerify(() => hot.item && hot.item.browser, 10000)
+            const b = hot.item.browser
+            compare(hot.generation, 1)
+            compare(b.tabs.count, 1)
+            b.controller.navigate(page("a"))
+            b.controller.openTab(page("b"))
+            b.controller.openTab(page("c"), true)
+            tryVerify(() => b.tabs.views.every(v => v.title.length === 1), 15000)
+            b.tabs.currentIndex = 1
+            b.controller.closeTab(2)
+
+            hot.reload()
+            tryCompare(hot, "generation", 2, 10000)
+            const nb = hot.item.browser
+            verify(nb !== b)
+            verify(nb.sessionRestored)
+            compare(nb.tabs.views.map(v => v.title), ["a", "b"])
+            compare(nb.tabs.currentIndex, 1)
+            compare(nb.controller.closedTabs.map(c => c.title), ["c"])
+            tryCompare(nb, "title", "b", 15000)
+        }
+
+        function cleanupTestCase() {
+            appLoader.active = false
+            // The app writes the session once more when it is destroyed.
+            tryVerify(() => {
+                const f = jsonFile.createObject(root)
+                const done = f.data.running === false
+                f.destroy()
+                return done
+            }, 5000)
+            verify(resetSession())
+        }
+    }
 }

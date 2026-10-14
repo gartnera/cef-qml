@@ -94,7 +94,7 @@ ActionRegistry {
         name: "tab.reopenClosed"; text: "Reopen closed tab"
         defaultShortcuts: ["Ctrl+Shift+T"]
         enabled: acts.controller !== null && acts.controller.closedTabs.length > 0
-        onTriggered: acts.controller.reopenClosedTab()
+        onTriggered: args => acts.controller.reopenClosedTab(args.index)
     }
     BrowserAction {
         name: "tab.recentlyClosed"; text: "Recently closed tabs"
