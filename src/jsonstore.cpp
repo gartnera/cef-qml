@@ -59,7 +59,7 @@ void JsonStore::componentComplete() {
   load();
 }
 
-QString JsonStore::resolve(const QString& path) const {
+QString JsonStore::resolvePath(const QString& path) {
   if (path.isEmpty())
     return {};
   QString p = path;
@@ -76,7 +76,7 @@ void JsonStore::setPath(const QString& path) {
   if (m_complete)
     flush();  // pending changes belong to the old file
   m_path = path;
-  m_filePath = resolve(path);
+  m_filePath = resolvePath(path);
   Q_EMIT pathChanged();
   if (m_complete)
     load();

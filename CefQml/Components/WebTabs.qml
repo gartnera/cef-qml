@@ -33,7 +33,18 @@ Item {
         _attachedStore = userScriptStore
         if (userScriptStore) for (const v of views) userScriptStore.attach(v)
     }
-    Component.onCompleted: _attachedStore = userScriptStore
+    // A HistoryStore that records every tab's visits (null: none).
+    property var historyStore: null
+    property var _attachedHistory: null
+    onHistoryStoreChanged: {
+        if (_attachedHistory) for (const v of views) _attachedHistory.detach(v)
+        _attachedHistory = historyStore
+        if (historyStore) for (const v of views) historyStore.attach(v)
+    }
+    Component.onCompleted: {
+        _attachedStore = userScriptStore
+        _attachedHistory = historyStore
+    }
 
     // When enabled, the matching request of every tab is forwarded through
     // the signals below instead of CEF's default handling.
@@ -138,6 +149,8 @@ Item {
     function _wire(view) {
         _attachedStore = userScriptStore
         if (userScriptStore) userScriptStore.attach(view)
+        _attachedHistory = historyStore
+        if (historyStore) historyStore.attach(view)
         view.urlChanged.connect(tabs.sessionChanged)
         view.newWindowRequested.connect((url, userGesture, background) => {
             if (tabs.openPopupsInNewTabs)

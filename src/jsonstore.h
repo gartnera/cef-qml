@@ -76,6 +76,10 @@ class JsonStore : public QObject, public QQmlParserStatus {
   Q_INVOKABLE void remove(const QString& key);
   Q_INVOKABLE QStringList keys() const;
 
+  // How `path` is resolved: file: URLs to local files, relative paths under
+  // Cef.dataDir. "" stays "".
+  static QString resolvePath(const QString& path);
+
  Q_SIGNALS:
   void pathChanged();
   void dataChanged();
@@ -88,7 +92,6 @@ class JsonStore : public QObject, public QQmlParserStatus {
   void error(const QString& message);
 
  private:
-  QString resolve(const QString& path) const;
   bool load();
   void markDirty();
   void setDirty(bool dirty);

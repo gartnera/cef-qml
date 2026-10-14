@@ -354,8 +354,8 @@ Downloads outlive the view that started them; all of them are listed in
 ### `JsonStore`
 
 A JSON document persisted to a file: the storage primitive behind
-`UserScriptStore`, and meant for any app state (history, bookmarks,
-settings, ...).
+`UserScriptStore`, and meant for any app state (bookmarks, settings, ...).
+Browsing history has its own store, `HistoryStore`.
 
 ```qml
 JsonStore {
@@ -385,6 +385,66 @@ A file that is not valid JSON is copied to `<file>.corrupt`, reported through
 save replaces the broken file. Each file should have one `JsonStore` at a
 time: two stores (or two processes) writing the same file do not merge, the
 last write wins.
+
+### `HistoryStore` and `HistoryModel`
+
+Browsing history: one entry per URL with its title, favicon, visit and typed
+counts and first/last visit times, persisted as JSON under `Cef.dataDir`. The
+`Browser` creates one by default; give your own `WebTabs` one with
+`historyStore`, or `attach()` single views.
+
+```qml
+HistoryStore {
+    id: history
+    path: "history.json"                    // default; "" keeps it in memory
+    maxEntries: 20000; maxAgeDays: 90       // pruning (0 = no limit)
+    ignoreUrl: url => url.startsWith("https://intranet/")
+}
+WebTabs { historyStore: history }           // records every tab
+// history.search("news", 8)  -> [{ url, title, icon, visitCount, typedCount, lastVisit, score, ... }]
+// history.inlineCompletion("exa") -> { text: "example.com/", completion: "mple.com/", url: "https://example.com/" }
+```
+
+A visit is recorded when a page finishes loading (titles and favicons that
+arrive later update the entry). Error pages, reloads (only the time is
+refreshed), `about:`/`chrome:`/`devtools:`/`javascript:`/`blob:`/`view-source:`
+URLs, URLs longer than `maxUrlLength` and those `ignoreUrl` rejects are not
+counted; `history.pushState()` navigations are, `#fragment` changes are not.
+The store is a list model (newest first) for history UIs.
+
+| Member | Description |
+|---|---|
+| `path`, `filePath` | As for `JsonStore` (default `"history.json"`). The file is written atomically, `saveDelay` ms (default 1000) after the last change, at destruction and at application quit. |
+| `enabled` | `false`: nothing is recorded and `search()`/`inlineCompletion()` return nothing. |
+| `recording` | `false` (private mode): attached views record nothing (and `recordVisit()` refuses), but searching existing history still works. |
+| `maxEntries`, `maxAgeDays` | Limits (default 20000 entries, 90 days; 0 disables). The least recently visited entries go first; changing a limit prunes right away. |
+| `maxUrlLength`, `ignoredSchemes`, `ignoreUrl` | What is never recorded (default 4096 characters; the schemes above; `function(url) -> bool`). |
+| `count`, `loaded`, `errorString` | Read-only. |
+| model roles | `url`, `title`, `icon`, `visitCount`, `typedCount`, `firstVisit`, `lastVisit` (ms since the epoch), `day` (`"yyyy-MM-dd"` local, for `ListView` sections), `host`. |
+| `recordVisit(url, { title, icon, typed, time, reload })` | Record a visit by hand (`time`: ms or `Date`). Returns `false` if the URL is ignored. |
+| `setTitle(url, title)`, `setIcon(url, icon)` | Update an entry. |
+| `contains(url)`, `entry(url)`, `get(row)` | Look up (plain objects; `entry` returns `undefined` for unknown URLs). |
+| `remove(url)`, `clear(since)` | Delete one entry; delete everything, or the entries last visited at or after `since` (ms or `Date`). `clear` writes the file immediately and returns the number removed. |
+| `search(text, limit)` | Entries whose URL or title contain every word of `text`, ranked by frecency (visits + 2 x typed visits, weighted by recency: 100 within 4 days, 70 within 2 weeks, 50 within a month, 30 within 90 days, then 10), x4 when the text is a prefix of the host or of the URL without scheme and `www.`, x1.5 per word matching at a word start. Empty text: the most frecent entries. |
+| `inlineCompletion(text)` | What an address bar completes `text` to: the most frecent host (`"exa"` -> `"example.com/"`), a full URL once the text contains a `/`, or for other schemes (`data:`, `file:`) the full URL. The typed part keeps its case; `undefined` when nothing matches or the text has spaces. |
+| `frecency(url)` | The ranking score without the text boosts. |
+| `attach(view)`, `detach(view)`, `isAttached(view)` | Track a `CefWebView`. |
+| `markTyped(view)` | The view's next navigation (within 30 s) was typed by the user: counts towards `typedCount`. |
+| `normalizeUrl(url)`, `isRecordable(url)` | The key used for a URL (encoded form); whether it would be recorded. |
+| `save()`, `reload()` | Write now; read the file again. |
+| signals `visited(string url)`, `saved()` | |
+
+`HistoryModel` filters a store for history pages: `store`, `filterText` (every
+word must occur in the URL or title), `count`, `get(row)`; rows keep the
+store's newest-first order.
+
+Why C++ instead of a `JsonStore`: history grows to tens of thousands of
+entries and is searched on every keystroke in the address bar. A hash plus a
+time-sorted list with cached lowercase strings keeps lookups O(1) and a search
+over 5000 entries in a few milliseconds, without converting the whole data
+set between JavaScript and `QVariant` on every change. The file is still
+plain JSON (`{ "version": 1, "entries": [...] }`). Like `JsonStore`, use one
+store per file: several `Browser` windows should share one `historyStore`.
 
 ### `HotReload` (Item)
 
@@ -425,7 +485,7 @@ through `Style`, or copy one as the starting point for your own.
 | `KeyBindings` | Window-wide keyboard shortcuts for an `ActionRegistry` (`actions`): defaults from the actions, `bindings` overrides, conflict resolution, modes. See below. |
 | `UserScriptStore` | Installed userscripts and their GM values, persisted under `Cef.dataDir`, injected into attached views. See [Userscripts](#userscripts). |
 | `UserScriptManager` | Manager UI for a `UserScriptStore` (`store`), with `view` for "running on this page". See [Managing scripts](#managing-scripts). |
-| `WebTabs` | Non-visual tab manager: one `CefWebView` per tab, stacked, only the current one visible. `views`, `count`, `currentIndex`, `currentView`, `homeUrl`, `viewDelegate` (a `Component` deriving from `CefWebView`), `openPopupsInNewTabs`, `closeOnRequest`, `userScriptStore` (a `UserScriptStore` injected into every tab). `openTab(url, background, index)`, `closeTab(index)`, `moveTab(from, to)`, `closeAll()`, `indexOf(view)`, `urls()` / `restore(urls, current)` for sessions. Signals `tabOpened`, `tabClosed(view, index)`, `lastTabClosed`, `sessionChanged`, `contextMenuRequested(view, ...)`; set `interceptJavaScriptDialogs` / `interceptPermissions` / `interceptFileDialogs` / `interceptDownloads` to receive every tab's requests as `javaScriptDialogRequested(view, dialog)`, `permissionRequested(view, request)`, `fileDialogRequested(view, request)`, `downloadRequested(view, download)`. |
+| `WebTabs` | Non-visual tab manager: one `CefWebView` per tab, stacked, only the current one visible. `views`, `count`, `currentIndex`, `currentView`, `homeUrl`, `viewDelegate` (a `Component` deriving from `CefWebView`), `openPopupsInNewTabs`, `closeOnRequest`, `userScriptStore` (a `UserScriptStore` injected into every tab), `historyStore` (a `HistoryStore` recording every tab's visits). `openTab(url, background, index)`, `closeTab(index)`, `moveTab(from, to)`, `closeAll()`, `indexOf(view)`, `urls()` / `restore(urls, current)` for sessions. Signals `tabOpened`, `tabClosed(view, index)`, `lastTabClosed`, `sessionChanged`, `contextMenuRequested(view, ...)`; set `interceptJavaScriptDialogs` / `interceptPermissions` / `interceptFileDialogs` / `interceptDownloads` to receive every tab's requests as `javaScriptDialogRequested(view, dialog)`, `permissionRequested(view, request)`, `fileDialogRequested(view, request)`, `downloadRequested(view, download)`. |
 | `TabStrip` | Horizontal tab bar for a `WebTabs` (`tabs`, required): click selects, middle click or × closes, + emits `newTabRequested()`. `maxTabWidth`, `minTabWidth`. |
 | `NavigationBar` | Back / forward / reload-stop, an `AddressField` and a load-progress line for `view`. `addressField`, `searchUrl`; children are placed after the address field (e.g. a menu button). |
 | `AddressField` | URL/search field bound to `view`: shows the page URL while not edited; Enter navigates, non-addresses are searched with `searchUrl` (`%s` = query). `text`, `input`, `isInternalUrl` (urls shown as an empty field), `urlFor(text)`, `focusAndSelect()`, signal `navigated(url)`. |
