@@ -29,6 +29,9 @@ class CefGlobal : public QObject {
 
   Q_INVOKABLE void copyToClipboard(const QString& text) const;
 
+  // Value of an environment variable ("" if unset); handy for dev setups.
+  Q_INVOKABLE QString environment(const QString& name) const;
+
  Q_SIGNALS:
   void downloadsChanged();
 };

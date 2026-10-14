@@ -346,6 +346,17 @@ Item {
             tryCompare(v, "title", "second", 10000)
         }
 
+        function test_22_destroyed_before_browser_exists() {
+            // Browser creation is asynchronous; a view destroyed in the same
+            // event-loop turn (e.g. a HotReload reload) must close the
+            // browser once CEF has created it, without crashing.
+            for (let i = 0; i < 3; ++i)
+                scriptedView.createObject(root).destroy()
+            wait(1500)  // let CEF create and close them
+            const v = createTemporaryObject(scriptedView, root)
+            tryCompare(v, "title", "injected:yes", 15000)
+        }
+
         function test_21_clipboard_bridge() {
             if (Qt.platform.pluginName !== "offscreen")
                 skip("needs a usable system clipboard (headless compositors have no seat focus)")

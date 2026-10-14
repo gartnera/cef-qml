@@ -37,7 +37,11 @@ class CefContext : public QObject {
   void unregisterClient(CefQmlClient* client);
 
   // Directory holding libcef.so, its resources and cef-qml-helper.
-  QString runtimeDir() const { return m_runtimeDir; }
+  QString runtimeDir() {
+    if (m_runtimeDir.isEmpty())
+      m_runtimeDir = locateRuntimeDir();
+    return m_runtimeDir;
+  }
 
   // Every download started in this process, oldest first.
   QList<CefDownload*> downloads() const { return m_downloads; }

@@ -2,6 +2,7 @@
 
 #include "cefcontext.h"
 #include "cefwebview.h"
+#include "hotreload.h"
 #include "requests.h"
 
 #include <QClipboard>
@@ -84,8 +85,13 @@ void CefGlobal::copyToClipboard(const QString& text) const {
   QGuiApplication::clipboard()->setText(text);
 }
 
+QString CefGlobal::environment(const QString& name) const {
+  return qEnvironmentVariable(name.toLocal8Bit().constData());
+}
+
 void CefQmlPlugin::registerTypes(const char* uri) {
   qmlRegisterType<CefWebView>(uri, 1, 0, "CefWebView");
+  qmlRegisterType<HotReload>(uri, 1, 0, "HotReload");
   const QString why = QStringLiteral("created by CefWebView");
   qmlRegisterUncreatableType<CefJavaScriptDialog>(uri, 1, 0, "CefJavaScriptDialog", why);
   qmlRegisterUncreatableType<CefPermissionRequest>(uri, 1, 0, "CefPermissionRequest", why);

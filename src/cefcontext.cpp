@@ -253,8 +253,16 @@ bool CefContext::ensureInitialized() {
   }
 
   m_state = State::Running;
+  // CEF must be shut down before the process exits: otherwise its threads keep
+  // running (and browsers stay open) while exit() tears down the process,
+  // which crashes intermittently. aboutToQuit is the normal path, with views
+  // still alive, but it is only emitted when QCoreApplication::exec() returns;
+  // apps that never call exec() (e.g. qmltestrunner, which runs each test file
+  // in its own QEventLoop) only destroy the application object, so also shut
+  // down from there. Whichever comes first wins.
   connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this,
           &CefContext::shutdown);
+  qAddPostRoutine([] { CefContext::instance()->shutdown(); });
   scheduleWork(0);
   return true;
 }
@@ -333,8 +341,14 @@ void CefContext::shutdown() {
     performWork();
     QThread::msleep(5);
   }
-  if (!m_clients.isEmpty())
+  if (!m_clients.isEmpty()) {
     qCWarning(lcCef) << m_clients.size() << "browser(s) did not close before shutdown";
+    // Their CefBrowser references must never be released after CefShutdown
+    // (that calls into torn-down CEF); leak them instead.
+    for (CefQmlClient* c : std::as_const(m_clients))
+      c->AddRef();
+    m_clients.clear();
+  }
 
   for (CefDownload* d : std::as_const(m_downloads))
     d->releaseCallbacks();

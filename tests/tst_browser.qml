@@ -204,11 +204,14 @@ Item {
             resetTabs()
             view().url = page("ctx", "<a href='" + page("from menu") + "' style='display:block;width:300px;height:60px'>link</a>")
             tryCompare(browser, "title", "ctx", 10000)
-            wait(200)
+            // The title arrives before the link is laid out and painted; a
+            // right click before that hits the page instead of the link.
+            compare(evaluate("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))"), 1)
             const p = view().mapToItem(root, 100, 30)
             mouseClick(root, p.x, p.y, Qt.RightButton)
             const panel = find("contextMenuPanel")
             tryVerify(() => panel.visible && panel.parent.visible, 5000)
+            verify(panel.parent.linkUrl.toString().startsWith("data:"), "menu opened on the link")
             // First entry: "Open link in new tab".
             mouseClick(root, panel.mapToItem(root, 40, 18).x, panel.mapToItem(root, 40, 18).y)
             tryCompare(browser.tabs, "count", 2, 5000)

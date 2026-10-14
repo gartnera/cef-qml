@@ -9,12 +9,11 @@ Window {
     height: 820
     visible: true
     color: Style.background
-    title: (browser.title ? browser.title + " — " : "") + "CefQml Browser"
+    title: (app.browser.title ? app.browser.title + " — " : "") + "CefQml Browser"
 
-    Browser {
-        id: browser
+    BrowserApp {
+        id: app
         anchors.fill: parent
-        focus: true
         // Any command line argument that looks like an address opens a tab.
         initialUrls: Qt.application.arguments.slice(1).filter(a => !a.endsWith(".qml") && !a.startsWith("-"))
     }

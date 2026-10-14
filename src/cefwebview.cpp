@@ -205,6 +205,10 @@ void CefWebView::createBrowser() {
   if (!CefBrowserHost::CreateBrowser(windowInfo, m_client, cefstr(start.toString()),
                                      settings, nullptr, nullptr)) {
     qCWarning(lcCef) << "CefBrowserHost::CreateBrowser failed";
+    // No browser will ever close for this client; don't make shutdown wait.
+    CefContext::instance()->unregisterClient(m_client.get());
+    m_client->detachView();
+    m_client = nullptr;
   }
 }
 

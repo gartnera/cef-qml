@@ -6,6 +6,8 @@
 #include <QQuickWindow>
 #include <QScreen>
 
+#include "include/cef_task.h"
+
 namespace {
 
 QString qstr(const CefString& s) {
@@ -15,6 +17,16 @@ QString qstr(const CefString& s) {
 QRect qrect(const CefRect& r) {
   return QRect(r.x, r.y, r.width, r.height);
 }
+
+class CloseBrowserTask : public CefTask {
+ public:
+  explicit CloseBrowserTask(CefRefPtr<CefQmlClient> client) : m_client(std::move(client)) {}
+  void Execute() override { m_client->closeBrowser(true); }
+
+ private:
+  CefRefPtr<CefQmlClient> m_client;
+  IMPLEMENT_REFCOUNTING(CloseBrowserTask);
+};
 
 }  // namespace
 
@@ -27,8 +39,14 @@ CefQmlClient::~CefQmlClient() {
 }
 
 void CefQmlClient::closeBrowser(bool force) {
+  // After CefShutdown nothing may call into CEF (see CefContext::shutdown).
+  if (!CefContext::instance()->isInitialized())
+    return;
   if (!m_browser) {
-    CefContext::instance()->unregisterClient(this);
+    // CreateBrowser() is asynchronous: the browser does not exist yet, so
+    // OnAfterCreated closes it. Stay registered meanwhile, so that
+    // CefContext::shutdown() waits for it.
+    m_closing = true;
     return;
   }
   if (m_closing && !force)
@@ -319,10 +337,16 @@ void CefQmlClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   m_browser = browser;
   // Released in OnBeforeClose (the registration references this client).
   m_devToolsRegistration = browser->GetHost()->AddDevToolsMessageObserver(this);
-  if (m_view)
+  if (m_view && !m_closing) {
     m_view->cefAfterCreated();
-  else
-    closeBrowser(true);
+    return;
+  }
+  // The view went away (or shutdown began) while the browser was being
+  // created. Closing right here would destroy the browser while CEF is still
+  // inside AlloyBrowserHostImpl::CreateInternal, which keeps using it after
+  // this callback (null deref); close it from a fresh UI-thread task instead.
+  m_closing = true;
+  CefPostTask(TID_UI, new CloseBrowserTask(this));
 }
 
 bool CefQmlClient::DoClose(CefRefPtr<CefBrowser>) {

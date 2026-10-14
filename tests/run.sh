@@ -23,6 +23,9 @@ tmp=$(mktemp -d)
 trap 'kill $weston_pid 2>/dev/null || true; rm -rf "$tmp"' EXIT INT TERM
 weston_pid=
 export CEF_QML_CACHE_DIR="$tmp/profile"
+# tst_hotreload writes QML files here through XMLHttpRequest.
+export QML_XHR_ALLOW_FILE_WRITE=1 QML_XHR_ALLOW_FILE_READ=1
+rm -rf "$builddir/test-hotreload"; mkdir -p "$builddir/test-hotreload"
 
 case $mode in
   offscreen)
