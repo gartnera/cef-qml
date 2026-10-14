@@ -19,7 +19,7 @@ QtObject {
     // Typed text that is not an address is searched; "%s" is the query.
     property string searchUrl: "https://duckduckgo.com/?q=%s"
     property real zoomStep: 0.1
-    // Closed tabs remembered for reopenClosedTab() (most recent last).
+    // How many closed tabs closedTabs keeps.
     property int closedTabsLimit: 25
     // URLs not worth remembering when their tab closes (e.g. a new-tab page).
     property var isInternalUrl: url => false
@@ -27,8 +27,14 @@ QtObject {
     readonly property CefWebView currentView: tabs ? tabs.currentView : null
     readonly property int count: tabs ? tabs.count : 0
     readonly property int currentIndex: tabs ? tabs.currentIndex : -1
-    // [{ url, index }] of recently closed tabs, most recent last.
-    readonly property var closedTabs: _closed
+    // Recently closed tabs, most recent last: [{ url (string), title, icon,
+    // index (its position when closed), time (ms since the epoch), zoom? }].
+    // A SessionStore persists it; assign to replace it.
+    property var closedTabs: []
+    onClosedTabsChanged: {
+        if (closedTabs.length > closedTabsLimit)
+            closedTabs = closedTabs.slice(closedTabs.length - closedTabsLimit)
+    }
 
     // ---- addresses ---------------------------------------------------------
 
@@ -68,9 +74,10 @@ QtObject {
             return whenLoaded(view, callback, _navigationOpts(opts))
         }
         // Setting the same URL again is a no-op for CefWebView; an address
-        // bar reloads instead.
+        // bar reloads instead. A discarded tab loads its (new) URL.
         if (view.url.toString() === url.toString()) view.reload()
         else view.url = url
+        if (view.discarded) view.discarded = false
         return whenLoaded(view, callback, _navigationOpts(opts))
     }
 
@@ -219,13 +226,36 @@ QtObject {
         const v = viewAt(tab)
         return v ? openTab(v.url, { index: tabs.indexOf(v) + 1 }) : null
     }
-    // Reopens the most recently closed tab at its old position.
-    function reopenClosedTab() {
-        if (_closed.length === 0) return null
-        const list = _closed.slice()
-        const entry = list.pop()
-        _closed = list
-        return openTab(entry.url, { index: Math.min(entry.index, count) })
+    // Reopens closedTabs[i] (default: the most recently closed one) at its
+    // old position, selects it and returns its view (null for a bad index).
+    function reopenClosedTab(i) {
+        if (i === undefined || i === null) i = closedTabs.length - 1
+        if (!tabs || i < 0 || i >= closedTabs.length) return null
+        const list = closedTabs.slice()
+        const entry = list.splice(i, 1)[0]
+        closedTabs = list
+        const props = {}
+        if (entry.title) props.title = entry.title
+        if (entry.icon) props.icon = entry.icon
+        if (entry.zoom > 0 && entry.zoom !== 1) props.zoomFactor = entry.zoom
+        // The stored URL as is: urlFor() would treat it as typed text.
+        const index = entry.index >= 0 ? Math.min(entry.index, count) : count
+        return tabs.openTab(entry.url, false, index, props)
+    }
+    // Removes closedTabs[i]; returns false for a bad index.
+    function forgetClosedTab(i) {
+        if (i < 0 || i >= closedTabs.length) return false
+        const list = closedTabs.slice()
+        list.splice(i, 1)
+        closedTabs = list
+        return true
+    }
+    function clearClosedTabs() { closedTabs = [] }
+
+    // Frees the browser of a background tab (see WebTabs.discard()).
+    function discardTab(tab) {
+        const i = indexOf(tab)
+        return i >= 0 && tabs.discard(i)
     }
 
     // First view for which predicate(view, index) is true, or null.
@@ -248,17 +278,17 @@ QtObject {
     // ---- internals ---------------------------------------------------------
 
     property var _trackers: []
-    property var _closed: []
     property Component _timerComponent: Component { Timer { running: true } }
     property Connections _tabsConnection: Connections {
         target: ctl.tabs
         function onTabClosed(view, index) {
             const u = view.url.toString()
             if (u === "" || u === "about:blank" || ctl.isInternalUrl(u)) return
-            // The url value, not its text: url.toString() decodes "%20"
-            // and the like, which would turn it into typed text.
-            const list = ctl._closed.concat([{ url: view.url, index: index }])
-            ctl._closed = list.slice(Math.max(0, list.length - ctl.closedTabsLimit))
+            const entry = { url: u, title: view.title, icon: view.icon.toString(),
+                            index: index, time: Date.now() }
+            if (view.zoomFactor !== 1) entry.zoom = view.zoomFactor
+            const list = ctl.closedTabs.concat([entry])
+            ctl.closedTabs = list.slice(Math.max(0, list.length - ctl.closedTabsLimit))
         }
     }
 

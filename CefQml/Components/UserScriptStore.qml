@@ -397,7 +397,8 @@ QtObject {
             signal scriptsChanged()
             signal valuesChanged(string id)
 
-            Component.onCompleted: {
+            Component.onCompleted: setup()
+            function setup() {
                 const v = view
                 v.devToolsMethod("Runtime.enable", {})
                 v.devToolsMethod("Runtime.addBinding", { name: store._pageBinding })
@@ -405,6 +406,22 @@ QtObject {
                                                          executionContextName: store._world })
                 registered = true
                 refreshAll()
+            }
+            // The view was discarded: its browser, with every registration
+            // and pending DevTools reply, is gone. Queue the setup again for
+            // the next browser (calls made while discarded wait for it).
+            function reset() {
+                life.alive = false
+                life = { alive: true }
+                regs = []
+                outstanding = 0
+                for (const k in xhrs) xhrs[k].abort()
+                xhrs = {}
+                if (running.page.length || running.content.length) {
+                    running = { page: [], content: [] }
+                    store.runningChanged(view)
+                }
+                setup()
             }
             Component.onDestruction: {
                 life.alive = false
@@ -514,6 +531,9 @@ QtObject {
 
             property Connections _events: Connections {
                 target: host.view
+                function onDiscardedChanged() {
+                    if (host.view.discarded && host.registered) host.reset()
+                }
                 function onDevToolsEvent(method, params) {
                     // The top document went away (cross-document navigation):
                     // its new document reports its scripts afresh.

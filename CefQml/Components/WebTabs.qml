@@ -2,7 +2,9 @@ import QtQuick
 import CefQml
 
 // Non-visual tab manager: owns one CefWebView per tab, stacked in this item,
-// with only the current one visible (hidden tabs stop rendering).
+// with only the current one visible (hidden tabs stop rendering). Background
+// tabs can be discarded (discard(), or restore() with `lazy`): they keep
+// their URL, title and icon but have no browser until they are selected.
 //
 //   WebTabs { id: tabs; anchors.fill: parent; Component.onCompleted: openTab("https://example.com") }
 //   tabs.currentView.goBack()
@@ -56,7 +58,9 @@ Item {
     signal tabOpened(CefWebView view, int index)
     signal tabClosed(CefWebView view, int index)
     signal lastTabClosed()
-    // Tabs, order, current tab or any tab URL changed (persist with urls()).
+    // Tabs, order or current tab changed, or a tab's url, title, icon,
+    // zoomFactor, audioMuted or discarded state (persist with urls(), or
+    // let a SessionStore do it).
     signal sessionChanged()
 
     signal javaScriptDialogRequested(CefWebView view, CefJavaScriptDialog dialog)
@@ -73,15 +77,11 @@ Item {
     function indexOf(view) { return views.indexOf(view) }
 
     // Opens `url` in a new tab at `index` (default: end) and returns its view.
-    function openTab(url, background, index) {
-        const target = url === undefined || url === "" ? homeUrl : url
-        const view = viewDelegate.createObject(tabs, { url: target, visible: false })
-        if (!view) {
-            console.warn("WebTabs: could not create view:", viewDelegate.errorString())
-            return null
-        }
-        view.anchors.fill = tabs
-        _wire(view)
+    // `properties` are set on the new view, e.g. { discarded: true, title:
+    // "Placeholder" } for a tab that only loads once selected.
+    function openTab(url, background, index, properties) {
+        const view = _create(url, properties)
+        if (!view) return null
         const list = views.slice()
         const at = index === undefined || index < 0 || index > list.length ? list.length : index
         list.splice(at, 0, view)
@@ -127,23 +127,81 @@ Item {
         while (views.length > 0) closeTab(views.length - 1)
     }
 
+    // Frees the browser of background tab `index` (see CefWebView.discarded):
+    // it keeps its URL, title and icon and loads again when selected (or
+    // navigated, or reloaded). Back/forward history and page state are lost.
+    // Returns false for the current tab or one already discarded.
+    function discard(index) {
+        const view = index >= 0 && index < views.length ? views[index] : null
+        if (!view || index === currentIndex || view.discarded) return false
+        view.discarded = true
+        return true
+    }
+
     // URLs of all tabs, for session persistence.
     function urls() { return views.map(v => v.url.toString()) }
 
-    // Replaces all tabs with `urlList`, selecting `current`.
-    function restore(urlList, current) {
-        const list = views.slice()
-        views = []
-        currentIndex = -1
-        list.forEach(v => v.destroy())
-        for (const u of urlList) openTab(u, true)
-        if (views.length > 0)
-            currentIndex = Math.max(0, Math.min(current || 0, views.length - 1))
+    // Replaces all tabs with `entries`, selecting `current`, and returns the
+    // new views. Entries are URLs or { url, title, icon, zoom, muted }
+    // objects (title and icon are shown until the page provides its own).
+    // `options`:
+    //   lazy: background tabs start discarded, so only the current tab loads
+    //   append: keep the existing tabs and add these after them
+    function restore(entries, current, options) {
+        options = options || {}
+        if (!options.append) {
+            const old = views.slice()
+            views = []
+            currentIndex = -1
+            old.forEach(v => v.destroy())
+        }
+        const n = entries ? entries.length : 0
+        if (n === 0) return []
+        const selected = Math.max(0, Math.min(current || 0, n - 1))
+        const created = []
+        for (let i = 0; i < n; ++i) {
+            const e = entries[i]
+            const isEntry = e !== null && typeof e === "object" && ("url" in e)
+            const props = {}
+            if (isEntry) {
+                if (e.title) props.title = e.title
+                if (e.icon) props.icon = e.icon
+                if (e.zoom > 0 && e.zoom !== 1) props.zoomFactor = e.zoom
+                if (e.muted) props.audioMuted = true
+            }
+            if (options.lazy && i !== selected) props.discarded = true
+            const view = _create(isEntry ? e.url : e, props)
+            if (view) created.push(view)
+        }
+        const base = views.length
+        views = views.concat(created)
+        const at = base + Math.min(selected, created.length - 1)
+        if (currentIndex === at) _updateVisibility()
+        else currentIndex = at
+        created.forEach((v, i) => tabOpened(v, base + i))
+        sessionChanged()
+        return created
+    }
+
+    function _create(url, properties) {
+        const target = url === undefined || url === null || url === "" ? homeUrl : url
+        const props = Object.assign({}, properties || {}, { url: target, visible: false })
+        const view = viewDelegate.createObject(tabs, props)
+        if (!view) {
+            console.warn("WebTabs: could not create view:", viewDelegate.errorString())
+            return null
+        }
+        view.anchors.fill = tabs
+        _wire(view)
+        return view
     }
 
     function _updateVisibility() {
-        for (let i = 0; i < views.length; ++i)
-            views[i].visible = i === currentIndex
+        for (let i = 0; i < views.length; ++i) {
+            const v = views[i]
+            v.visible = i === currentIndex
+            if (v.visible && v.discarded) v.discarded = false
+        }
     }
 
     function _wire(view) {
@@ -152,6 +210,11 @@ Item {
         _attachedHistory = historyStore
         if (historyStore) historyStore.attach(view)
         view.urlChanged.connect(tabs.sessionChanged)
+        view.titleChanged.connect(tabs.sessionChanged)
+        view.iconChanged.connect(tabs.sessionChanged)
+        view.zoomFactorChanged.connect(tabs.sessionChanged)
+        view.audioMutedChanged.connect(tabs.sessionChanged)
+        view.discardedChanged.connect(tabs.sessionChanged)
         view.newWindowRequested.connect((url, userGesture, background) => {
             if (tabs.openPopupsInNewTabs)
                 tabs.openTab(url, background, tabs.indexOf(view) + 1)
