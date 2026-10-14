@@ -1,0 +1,13 @@
+[package]
+name = "servo-qml"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+[dependencies]
+servo = { version = "=0.7.0", default-features = false, features = ["bundled", "clipboard", "js_jit"] }
