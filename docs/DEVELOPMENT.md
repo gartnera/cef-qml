@@ -42,6 +42,10 @@ Notes for contributors (human or agent). Read this before changing anything.
   Sessions: `SessionStore.qml` (session file, crash mark, restore),
   `SessionRegistry.js` (one writer per session file in a process) and
   `RecentlyClosedMenu.qml`.
+  Command palette: `CommandPalette.qml` (overlay, built-in providers,
+  ranking, recently used commands) and `Providers.js` (shared with
+  `AddressSuggestions`: calling providers, normalizing items, glyphs, and
+  the fuzzy matcher with highlighting).
 - `examples/browser/` — the reference application (`main.qml`, `dev.qml` for
   live reload, `BrowserApp.qml`).
 - `tests/` — `qmltestrunner` suites, run by `tests/run.sh` (via `meson test`),
@@ -280,6 +284,50 @@ signal kills the process the default way.
   - A `checkable` `BrowserAction` flips `checked` itself in `trigger()`,
     which breaks a `checked` binding; `bookmarks.showBar` restores it with
     `Qt.binding` after writing the target property.
+- Command palette:
+  - Ctrl+K does not open the palette from a focused `TextInput` (e.g.
+    the address field) under Qt's X11 key scheme, which the generic Unix
+    platform theme uses. That scheme maps Ctrl+K to DeleteEndOfLine, so
+    the text field accepts the ShortcutOverride before the window-wide
+    `Shortcut` sees the key. Ctrl+Shift+P always works, so the tests use
+    it from the address field. The offscreen platform uses the Windows key
+    scheme, so a test that passes there does not prove Ctrl+K works in a
+    field on Linux.
+  - No action defaults to Ctrl+Shift+P or Ctrl+K, and `KeyBindings` would
+    log a conflict if one did. Both keys are window-wide shortcuts, so
+    pages never see them; users who need Ctrl+K in pages rebind
+    `palette.show`.
+  - Like the bookmark menus, the palette reparents itself to
+    `Window.window.contentItem` (z 10003, above `PopupMenu`). It saves
+    `activeFocusItem` in `open()`, but only when that item is outside the
+    palette, so switching modes while open keeps the original. `close()`
+    restores it. Losing the focus to something else (a click in another
+    window, another overlay) closes the palette without restoring, so it
+    never steals the focus back.
+  - Do not name the root id `palette`. Since Qt 6 every `Item` has a
+    `palette` property, and inside a delegate (a separate context) the
+    delegate's own `palette` shadows the outer id. `height:
+    palette.rowHeight` silently became 0, and clicks called `run` on a
+    `QQuickPalette`. The component uses `id: cmd`, and `Browser` uses
+    `cmdPalette`.
+  - Sorting is explicit about ties (score, then provider order, then the
+    provider's own order), so the ranking does not depend on the sort
+    algorithm or on declaration order.
+  - Rows that appear under a resting pointer must not take the selection
+    (see `AddressSuggestions`). `_hover` compares positions, and tests park
+    the pointer in a corner.
+  - Recently used commands go to `Cef.dataDir/command-palette.json`, which
+    every suite shares. `tst_palette.qml` calls `clearRecent()` in `init`
+    and `save()`s in `cleanupTestCase`. A second palette in a process
+    needs its own `recentPath` (the test's own palette uses `""`, in
+    memory).
+  - URLs are not remembered as recent entries. History already ranks
+    them, and the MRU file would duplicate browsing data. Only actions and
+    items with an explicit `key` are remembered.
+  - Typed addresses go through `BrowserController.navigate()`, which
+    treats strings as typed text (so `data:text/html,hello world` would
+    become a search). `run()` passes absolute addresses as `url` values
+    (`Qt.resolvedUrl`).
 - QML: an `alias` cannot go through a property (`alias text: field.input.text`
   fails with "Invalid alias reference"); give the inner item an alias and
   alias that (`Field.text`). A property with the same name as an id in the

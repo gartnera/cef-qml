@@ -1,5 +1,6 @@
 import QtQuick
 import CefQml
+import "Providers.js" as Providers
 
 // Drop-down suggestions and inline autocompletion for an AddressField.
 //
@@ -221,10 +222,7 @@ Item {
         return historyStore ? historyStore.normalizeUrl(url) : String(url)
     }
 
-    function _display(url) {
-        url = String(url)
-        try { return decodeURIComponent(url) } catch (e) { return url }
-    }
+    function _display(url) { return Providers.display(url) }
 
     function _words(text) {
         return text.toLowerCase().split(/\s+/).filter(w => w !== "")
@@ -290,22 +288,10 @@ Item {
         return out
     }
 
+    // Items that can do something here: a URL or an action function.
     function _normalize(item, provider) {
-        if (!item || (!item.url && typeof item.action !== "function")) return null
-        const removable = item.removable !== undefined ? !!item.removable
-            : typeof item.remove === "function" || !!(provider && typeof provider.remove === "function")
-        return {
-            type: item.type || "custom",
-            title: String(item.title || _display(item.url || "")),
-            subtitle: item.subtitle ? String(item.subtitle) : "",
-            url: item.url ? String(item.url) : "",
-            icon: item.icon ? String(item.icon) : "",
-            action: item.action,
-            remove: item.remove,
-            removable: removable,
-            _completion: !!item._completion,
-            _provider: provider
-        }
+        const n = Providers.normalize(item, provider)
+        return n && (n.url || typeof n.action === "function") ? n : null
     }
 
     function _refresh() {
@@ -322,14 +308,8 @@ Item {
                       bookmarkStore: bookmarkStore, limit: maxItems }
         const results = []
         providers.forEach((p, i) => {
-            let r = []
-            try {
-                r = typeof p === "function" ? p(text, ctx)
-                    : p && typeof p.suggest === "function" ? p.suggest(text, ctx) : []
-            } catch (e) {
-                console.warn("AddressSuggestions: provider failed:", e)
-            }
-            if (r && typeof r.then === "function") {
+            const r = Providers.call(p, text, ctx, "AddressSuggestions")
+            if (Providers.isPromise(r)) {
                 results[i] = []
                 r.then(list => {
                     if (gen !== _generation) return
@@ -441,16 +421,7 @@ Item {
         return out
     }
 
-    function _glyph(type) {
-        switch (type) {
-        case "search": return "⌕"
-        case "history": return "◷"
-        case "tab": return "⇥"
-        case "bookmark": return "★"
-        case "url": return "→"
-        default: return "•"
-        }
-    }
+    function _glyph(type) { return Providers.glyph(type) }
 
     Connections {
         target: sug.addressField ? sug.addressField.input : null

@@ -101,6 +101,11 @@ FocusScope {
     // (RecentlyClosedMenu; action "tab.recentlyClosed").
     property alias tabMenu: tabMenu
     property alias recentlyClosedMenu: closedMenu
+    // The command palette (CommandPalette; action "palette.show":
+    // Ctrl+Shift+P for commands, Ctrl+K for everything) and whether it is
+    // shown.
+    property alias commandPalette: cmdPalette
+    readonly property bool commandPaletteVisible: cmdPalette.visible
 
     signal lastTabClosed()
 
@@ -131,6 +136,10 @@ FocusScope {
     function hideHistory() { historyOverlay.close() }
     function showBookmarks() { bookmarkOverlay.open() }
     function hideBookmarks() { bookmarkOverlay.close() }
+    // Opens the command palette with `prefix` typed (">" commands, "@" tabs,
+    // "*" bookmarks, "#" history; default: everything).
+    function showCommandPalette(prefix) { return cmdPalette.open(prefix) }
+    function hideCommandPalette() { cmdPalette.close() }
     // Opens a bookmark (or any URL) as the bookmark components do: here, or
     // in a background tab next to the current one.
     function openBookmark(url, newTab) {
@@ -418,6 +427,15 @@ FocusScope {
         objectName: "recentlyClosedMenu"
         controller: ctl
     }
+    CommandPalette {
+        id: cmdPalette
+        objectName: "commandPalette"
+        actions: acts
+        keyBindings: keys
+        controller: ctl
+        historyStore: browser.historyStore
+        bookmarkStore: browser.bookmarkStore
+    }
 
     Component.onCompleted: {
         if (!openInitialTabs) return
@@ -450,6 +468,7 @@ FocusScope {
         bookmarksBarProperty: "showBookmarksBar"
         recentlyClosedMenu: closedMenu
         sessionStore: browser.sessionStore
+        commandPalette: cmdPalette
     }
 
     // Install prompt for *.user.js pages loaded in the current tab.

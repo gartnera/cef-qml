@@ -550,11 +550,11 @@ through `Style`, or copy one as the starting point for your own.
 
 | Component | Purpose and key API |
 |---|---|
-| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts), `userScriptManager` (the `UserScriptManager` overlay), `userScriptManagerVisible`, `offerUserScriptInstall` (default true), `historyStore` (a `HistoryStore` on `history.json`; null disables history), `addressSuggestions` (the address bar's `AddressSuggestions`), `historyView` (the `HistoryView` overlay), `historyVisible`, `bookmarkStore` (a `BookmarkStore` on `bookmarks.json`; null disables bookmarks), `showBookmarksBar`, `bookmarksBar`, `bookmarkManager` (the `BookmarkManager` overlay), `bookmarkManagerVisible`, `sessionStore` (a `SessionStore` on `<sessionName>.json`; null keeps no session), `sessionName` (default `"session"`; one per `Browser` of a process), `restoreSession` (`"always"`, `"never"` or `"ifCrashed"`, the default), `sessionRestored`, `tabMenu` (the tab strip's right-click menu), `recentlyClosedMenu` (a `RecentlyClosedMenu`). See [Sessions](#sessions). Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`, `showUserScripts()`, `hideUserScripts()`, `showHistory()`, `hideHistory()`, `showBookmarks()`, `hideBookmarks()`, `openBookmark(url, newTab)`, `showTabMenu(index, item, x, y)`, `reviewUserScript(url)`, `isUserScriptUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
+| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts), `userScriptManager` (the `UserScriptManager` overlay), `userScriptManagerVisible`, `offerUserScriptInstall` (default true), `historyStore` (a `HistoryStore` on `history.json`; null disables history), `addressSuggestions` (the address bar's `AddressSuggestions`), `historyView` (the `HistoryView` overlay), `historyVisible`, `bookmarkStore` (a `BookmarkStore` on `bookmarks.json`; null disables bookmarks), `showBookmarksBar`, `bookmarksBar`, `bookmarkManager` (the `BookmarkManager` overlay), `bookmarkManagerVisible`, `sessionStore` (a `SessionStore` on `<sessionName>.json`; null keeps no session), `sessionName` (default `"session"`; one per `Browser` of a process), `restoreSession` (`"always"`, `"never"` or `"ifCrashed"`, the default), `sessionRestored`, `tabMenu` (the tab strip's right-click menu), `recentlyClosedMenu` (a `RecentlyClosedMenu`), `commandPalette` (a `CommandPalette`), `commandPaletteVisible`. See [Sessions](#sessions) and [Command palette](#command-palette). Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`, `showUserScripts()`, `hideUserScripts()`, `showHistory()`, `hideHistory()`, `showBookmarks()`, `hideBookmarks()`, `showCommandPalette(prefix)`, `hideCommandPalette()`, `openBookmark(url, newTab)`, `showTabMenu(index, item, x, y)`, `reviewUserScript(url)`, `isUserScriptUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
 | `BrowserController` | Non-visual programmatic API over a `WebTabs` (`tabs`): navigation that reports its result, tab helpers, zoom, recently closed tabs. See below. |
-| `BrowserAction` | A named command: `name` (`"tab.new"`), `text`, `description`, `category`, `enabled`, `checkable`/`checked`, `defaultShortcuts`, signal `triggered(args)`, `trigger(args)`. |
+| `BrowserAction` | A named command: `name` (`"tab.new"`), `text`, `description`, `category`, `enabled`, `checkable`/`checked`, `defaultShortcuts`, `showInPalette` (default true; false for actions that need arguments), signal `triggered(args)`, `trigger(args)`. |
 | `ActionRegistry` | A set of `BrowserAction`s looked up and run by name: `model` (for menus or a command palette), `count`, `action(name)`, `has(name)`, `names()`, `trigger(name, args)`, `add(action or { name, text, defaultShortcuts, onTriggered })`, `remove(nameOrAction)`, signal `actionTriggered(name, args)`. |
-| `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar`, `window`, `userScriptManager`, `historyView` and `bookmarkManager` (anything with `toggle()` and `visible`, e.g. a `PanelOverlay`), `bookmarkStore`, `bookmarkButton` and `bookmarksBarTarget` / `bookmarksBarProperty` (the object and boolean property `bookmarks.showBar` toggles; default property `"visible"`), `recentlyClosedMenu` and `sessionStore` they act on. |
+| `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar`, `window`, `userScriptManager`, `historyView` and `bookmarkManager` (anything with `toggle()` and `visible`, e.g. a `PanelOverlay`), `bookmarkStore`, `bookmarkButton` and `bookmarksBarTarget` / `bookmarksBarProperty` (the object and boolean property `bookmarks.showBar` toggles; default property `"visible"`), `recentlyClosedMenu`, `sessionStore` and `commandPalette` they act on. |
 | `KeyBindings` | Window-wide keyboard shortcuts for an `ActionRegistry` (`actions`): defaults from the actions, `bindings` overrides, conflict resolution, modes. See below. |
 | `UserScriptStore` | Installed userscripts and their GM values, persisted under `Cef.dataDir`, injected into attached views. See [Userscripts](#userscripts). |
 | `UserScriptManager` | Manager UI for a `UserScriptStore` (`store`), with `view` for "running on this page". See [Managing scripts](#managing-scripts). |
@@ -569,6 +569,7 @@ through `Style`, or copy one as the starting point for your own.
 | `NavigationBar` | Back / forward / reload-stop, an `AddressField`, a bookmark star (when `bookmarkStore` is set) and a load-progress line for `view`. `addressField`, `searchUrl`, `bookmarkStore`, `bookmarkButton`; children are placed after the address field (e.g. a menu button). |
 | `AddressField` | URL/search field bound to `view`: shows the page URL while not edited; Enter navigates, non-addresses are searched with `searchUrl` (`%s` = query); Escape restores the page URL, a second Escape (or one with nothing edited) returns focus to the page. `text`, `input`, `isInternalUrl` (urls shown as an empty field), `suggestions` (set by `AddressSuggestions`), `urlFor(text)`, `go(url)` (load in `view` and focus it; the same URL reloads), `focusAndSelect()`, signal `navigated(url)`. |
 | `AddressSuggestions` | Drop-down and inline autocompletion for an `AddressField` from open tabs, a `HistoryStore` and your own providers. See [Address bar suggestions](#address-bar-suggestions). |
+| `CommandPalette` | Keyboard-first overlay that runs actions, switches tabs, reopens closed tabs and opens bookmarks, history entries or typed addresses, with fuzzy matching and your own providers. See [Command palette](#command-palette). |
 | `FindBar` | Find-in-page bar for `view`: Enter next, Shift+Enter previous, Escape closes. `text`, `matchCount`, `activeMatch`, `matchCase`, `open()`, `close()`, `findNext(forward)`, signal `closeRequested()`. |
 | `RequestOverlay` | Shows JavaScript dialogs and permission prompts of a `WebTabs` (`tabs`, required) as an in-page card; requests of background tabs wait until their tab is shown. `rememberPermissions` (per origin and permission, this session). |
 | `ContextMenu` | Right-click menu for a `WebTabs` (`tabs`, required), drawn inside the window: open/copy link, undo/redo/cut/copy/paste/select all in editable fields, copy selection, otherwise back/forward/reload. Signal `openLinkInNewTab(url)`; `show(view, x, y, linkUrl, selectedText, editable)`, `close()`. |
@@ -643,6 +644,137 @@ Browser {
 The popup is placed under the field inside the suggestions' `parent`: put
 `AddressSuggestions` in an item that covers the page area (e.g. the window's
 content item), declared after the web views so it stacks above them.
+
+### Command palette
+
+`CommandPalette` is a keyboard-first overlay in the style of VS Code's command
+palette or Vivaldi's Quick Commands. `Browser` has one (`browser.commandPalette`),
+opened by the `palette.show` action: **Ctrl+Shift+P** opens it on commands,
+**Ctrl+K** on everything. On Linux, a focused text field keeps Ctrl+K
+(delete to end of line), so use Ctrl+Shift+P there.
+`browser.showCommandPalette(prefix)` opens it from code. The text you type is matched against every source. A leading prefix
+limits it to one mode:
+
+| Prefix | Lists |
+|---|---|
+| (none) | open tabs, commands, bookmarks, history, recently closed tabs, then "Open address" / "Search the web" for the text |
+| `>` | commands: the actions of `actions`, each with its category, key hint (`keyBindings.hint(name)`), checked state, and dimmed when disabled |
+| `@` (or `%`) | open tabs ("Switch to tab"), then recently closed tabs ("Reopen closed tab") |
+| `*` | bookmarks (`BookmarkStore.search()`) |
+| `#` | history (`HistoryStore.search()`) |
+
+- **Keys**: Up / Down, PageUp / PageDown, Home / End and Tab / Shift+Tab
+  move the selection, and Enter runs it. Alt+Enter or Ctrl+Enter runs its
+  alternate: an address, bookmark or history entry opens in a new tab.
+  Shift+Delete removes the entry from its source: it deletes a history
+  entry, forgets a closed tab or closes an open one. Escape closes the
+  palette and gives the focus back to where it was.
+- **Mouse**: moving over an entry selects it. A click runs it, and a middle
+  click or Ctrl+click runs the alternate. A click outside closes the palette.
+- **Ranking**: matching is case-insensitive. Titles rank in this order:
+  1. an exact match
+  2. a prefix
+  3. a match at a word start, including camelCase and acronyms (`nt` → "New
+     tab")
+  4. a match anywhere
+  5. a fuzzy match: the characters in order
+  
+  The matched characters are highlighted. Several words must each match.
+  Subtitles and keywords (an action's name and description) match one step
+  lower and are not highlighted. Commands you ran recently move up. The last
+  `maxRecent` (20) are kept in `recent` and saved to
+  `Cef.dataDir/command-palette.json` (`recentPath`; `""` keeps them in
+  memory). An empty query lists them first.
+
+Sources are **providers** with the same shape as
+[`AddressSuggestions`](#address-bar-suggestions): a function
+`(text, ctx) => items`, or an object
+`{ suggest(text, ctx), remove(item), prefix, title, mixed, prefiltered }`.
+They return an array or a Promise of one.
+
+- `prefix` (a string or a list) gives the provider a mode of its own, and
+  `title` names it in the footer.
+- `mixed: false` lists it only in that mode.
+- `prefiltered: true` keeps items that do not match the text, because the
+  provider already searched.
+- `ctx` is `{ text, query, mode, palette, view, tabs, controller, actions,
+  keyBindings, historyStore, bookmarkStore, limit }`.
+
+An item is `{ title, subtitle, icon, type, category, hint, label, keywords,
+enabled, checked, key, score, sticky }` plus what it does:
+
+- an `action(item, alternate)` function
+- an `actionName` with `args`, run through `actions`
+- a `url` to open
+
+`key` lets the item count as recently used, and a numeric `score` places it
+without matching (higher first; matches score from 1000, fuzzy, to about
+5400, an exact match of a recent command).
+
+```qml
+Browser {
+    id: browser
+    // A command of your own: any action shows up under ">".
+    BrowserAction {
+        registry: browser.actions
+        name: "app.copyTitle"; text: "Copy page title"; category: "page"
+        onTriggered: Cef.copyToClipboard(browser.title)
+    }
+    Component.onCompleted: {
+        // A source of your own, listed with everything else.
+        browser.commandPalette.addProvider((text, ctx) => myNotes
+            .filter(n => n.title.toLowerCase().includes(ctx.query.toLowerCase()))
+            .map(n => ({ type: "note", title: n.title, subtitle: n.url, url: n.url })))
+        // A mode of its own: "!" lists actions with arguments as entries.
+        browser.commandPalette.addProvider({
+            prefix: "!", title: "Go to tab", mixed: false,
+            suggest: (text, ctx) => ctx.tabs.views.map((v, i) => ({
+                title: "Go to tab " + (i + 1), subtitle: v.title,
+                actionName: "tab.select", args: { index: i }, key: "goto:" + i }))
+        })
+    }
+}
+```
+
+**Actions with arguments.** The palette runs an action with `{}`, which
+uses its defaults (`tab.new` opens a new tab, `tab.close` closes the
+current one). An action that only makes sense with arguments sets
+`showInPalette: false`, as `tab.select` does (the `@` mode covers it). Offer
+it through a provider instead, with one entry per argument set
+(`actionName` + `args`, like the `!` mode above).
+
+**In a layout of your own**, declare a `CommandPalette` anywhere in the window.
+It moves itself to the window's content item, above everything, when
+opened. Point `BrowserActions.commandPalette` at it for the keys:
+
+```qml
+BrowserController { id: ctl; tabs: tabs }
+BrowserActions { id: acts; controller: ctl; commandPalette: cmdPalette }
+KeyBindings { id: keys; actions: acts }
+CommandPalette {
+    id: cmdPalette   // not "palette": Qt 6 Items have a palette property that shadows it
+    actions: acts; keyBindings: keys; controller: ctl
+    historyStore: history; bookmarkStore: bookmarks   // optional
+}
+```
+
+Without a `controller`, set `tabs`, `navigate(url, newTab)` and
+`openAddresses: true` to open addresses. To list only your commands, set
+`providers: [cmdPalette.actionProvider]`. To keep Ctrl+K for pages, rebind the
+action:
+`bindings: ({ "palette.show": [{ sequence: "Ctrl+Shift+P", args: { prefix: ">" } }] })`.
+
+| Member | Description |
+|---|---|
+| `actions`, `keyBindings`, `controller`, `tabs`, `historyStore`, `bookmarkStore` | The sources: an `ActionRegistry`, `KeyBindings` for key hints, a `BrowserController` (open and closed tabs, opening addresses; `tabs` defaults to its `WebTabs`), a `HistoryStore` and a `BookmarkStore`. |
+| `providers` | Default `[tabProvider, actionProvider, bookmarkProvider, historyProvider, closedTabProvider, urlProvider]` (also properties). `addProvider(provider, index)`, `removeProvider(provider)`. |
+| `navigate(url, newTab)`, `selectTab(view)`, `isInternalUrl(url)`, `searchUrl`, `openAddresses` | How entries open (replaceable functions; the defaults use `controller`). `searchUrl` is the search entry's URL (`%s` = query). `openAddresses` (default: with a `controller`) offers the typed address and the search. |
+| `maxResults`, `sourceLimit`, `categoryNames` | At most 50 entries. With no prefix, at most 8 per source for bookmarks, history and closed tabs. `categoryNames` holds the display names of action categories (`"tab"` → "Tabs"). |
+| `recent`, `recentPath`, `maxRecent`, `clearRecent()` | Recently run commands. |
+| `panelWidth`, `topMargin`, `rowHeight`, `maxVisibleRows`, `backdropColor` | Look (colors and fonts come from `Style`). |
+| `text`, `input`, `prefix`, `query`, `prefixes`, `items`, `currentIndex`, `opened` | State: `text` is the input (writable, prefix included), `query` the text after the prefix, and `items` the listed entries. |
+| `open(prefix)`, `close()`, `toggle(prefix)`, `run(index, alternate)`, `removeItem(index)`, `update()`, `handleKey(event)`, `rowAt(index)`, `match(query, text)` | `run` returns false for a disabled entry. `match` is the ranking's matcher: it returns `{ tier, quality, positions }` or null. |
+| signals `activated(item, alternate)`, `closed()` | An entry ran, or the palette closed. |
 
 ### History page
 
@@ -1055,6 +1187,7 @@ and the same pieces work in a layout of your own.
 | `bookmark.toggle` | Ctrl+D | bookmarks the page (with `bookmarkButton`: and opens its editor) or removes its bookmarks; `checked` while bookmarked |
 | `bookmarks.showBar` | Ctrl+Shift+B | checkable: shows / hides the bookmarks bar; `{ show }` sets it |
 | `bookmarks.manage` | Ctrl+Shift+O | shows / hides the bookmark manager; `checked` while shown |
+| `palette.show` | Ctrl+Shift+P (commands), Ctrl+K | shows / hides the command palette; `{ prefix }` opens a mode (`">"`, `"@"`, `"*"`, `"#"`); `checked` while shown |
 
 Every action has a human-readable `text`, and `enabled` follows the state
 (e.g. `nav.back` only with history). Disabled actions do not run, and their
@@ -1131,7 +1264,9 @@ Browser {
 
 Run any action by name: `browser.trigger("tab.select", { index: 2 })` returns
 whether it ran. `actions.model` (each entry has `name`, `text`, `category`,
-`enabled`, ...) and `keyBindings.hint(name)` are all a command palette needs.
+`enabled`, ...) and `keyBindings.hint(name)` are what menus and the
+[command palette](#command-palette) list; every action you add shows up in
+the palette (unless `showInPalette: false`).
 
 **Scripting navigation.** `navigate(target, opts, callback)` accepts a URL or
 typed text (an address or a search), loads it, and returns a `Promise` of the

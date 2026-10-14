@@ -19,7 +19,8 @@ import CefQml
 // `bookmarksBarTarget` whose boolean `bookmarksBarProperty` (default
 // "visible") it flips. tab.recentlyClosed needs a `recentlyClosedMenu`
 // (popup(item, x, y), e.g. a RecentlyClosedMenu) and session.restore a
-// `sessionStore` (a SessionStore with a saved session). Declare more
+// `sessionStore` (a SessionStore with a saved session), palette.show a
+// `commandPalette` (a CommandPalette: toggle(prefix), visible). Declare more
 // BrowserActions inside, or replace one
 // by adding an action with the same name.
 ActionRegistry {
@@ -38,6 +39,7 @@ ActionRegistry {
     property string bookmarksBarProperty: "visible"
     property var recentlyClosedMenu: null
     property var sessionStore: null
+    property var commandPalette: null
 
     readonly property CefWebView view: controller ? controller.currentView : null
     readonly property bool hasView: view !== null
@@ -79,6 +81,8 @@ ActionRegistry {
         defaultShortcuts: [1, 2, 3, 4, 5, 6, 7, 8].map(n => ({ sequence: "Ctrl+" + n, args: { index: n - 1 } }))
                           .concat([{ sequence: "Ctrl+9", args: { index: -1 } }])
         enabled: acts.hasView
+        // Needs an index: the palette's "@" mode lists the tabs instead.
+        showInPalette: false
         onTriggered: args => {
             const c = acts.controller
             const i = args.index === undefined ? 0 : args.index
@@ -292,6 +296,19 @@ ActionRegistry {
         checked: acts.bookmarkManager !== null && acts.bookmarkManager.visible
         enabled: acts.bookmarkManager !== null
         onTriggered: acts.bookmarkManager.toggle()
+    }
+
+    // palette.*
+    BrowserAction {
+        name: "palette.show"; text: "Command palette"
+        description: "Show or hide the command palette (args: { prefix }: \">\" commands, \"@\" tabs, \"*\" bookmarks, \"#\" history; default: everything)."
+        // Ctrl+Shift+P: commands only (as in VS Code); Ctrl+K: everything
+        // (a quick switcher). Neither is a browser default elsewhere.
+        defaultShortcuts: [{ sequence: "Ctrl+Shift+P", args: { prefix: ">" } }, "Ctrl+K"]
+        showInPalette: false
+        checked: acts.commandPalette !== null && acts.commandPalette.visible
+        enabled: acts.commandPalette !== null
+        onTriggered: args => acts.commandPalette.toggle(args.prefix)
     }
 
     function _barShown() {

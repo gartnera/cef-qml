@@ -1,7 +1,7 @@
 import QtQml
 
 // A named, triggerable command: the unit that key bindings, menus, buttons
-// and (later) a command palette all refer to.
+// and the command palette all refer to.
 //
 //   BrowserAction {
 //       registry: browser.actions          // optional: registers itself
@@ -30,6 +30,10 @@ QtObject {
     // (strings in QKeySequence portable format, StandardKey values, or
     // { sequence, args } objects to pass arguments).
     property var defaultShortcuts: []
+    // Listed by CommandPalette. Turn off for actions that need arguments
+    // the palette cannot supply (e.g. "tab.select"; its "@" mode lists the
+    // tabs instead) or that make no sense there.
+    property bool showInPalette: true
     // An ActionRegistry to add this action to (and remove it from on
     // destruction). Leave null when the action is declared inside a registry.
     property var registry: null
