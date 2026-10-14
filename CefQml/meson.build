@@ -22,13 +22,12 @@ plugin = shared_module('cefqmlplugin',
   cpp_args: ['-DQT_NO_KEYWORDS'],
   link_args: ['-ldl'],
   build_rpath: runtime_build_dir,
-  install_rpath: runtime_install_dir,
+  install_rpath: plugin_install_rpath,
   install: true,
   install_dir: qml_dir / 'CefQml',
 )
 
-configure_file(input: 'qmldir', output: 'qmldir', copy: true,
-  install: true, install_dir: qml_dir / 'CefQml')
+qmldir_file = fs.copyfile('qmldir', install: true, install_dir: qml_dir / 'CefQml')
 
 # Pure-QML module CefQml.Components, linked into the build tree so
 # QML_IMPORT_PATH=<builddir> picks up edits without rebuilding.

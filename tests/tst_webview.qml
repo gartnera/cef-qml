@@ -265,7 +265,7 @@ Item {
 
         function test_17_download() {
             root.handleDialogs = true
-            root.downloadDir = Cef.runtimeDir + "/../test-downloads/"
+            root.downloadDir = Cef.environment("CEF_QML_TEST_DIR") + "/test-downloads/"
             const before = Cef.downloads.length
             view.loadHtml(`<title>dl</title><body style="margin:0">
               <a download="hello.txt" href="data:text/plain,hello%20world"

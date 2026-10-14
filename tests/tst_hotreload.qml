@@ -10,7 +10,8 @@ Item {
     width: 400
     height: 300
 
-    readonly property string dir: Cef.runtimeDir + "/../test-hotreload"
+    // Scratch directory created by tests/run.sh.
+    readonly property string dir: Cef.environment("CEF_QML_TEST_DIR") + "/test-hotreload"
 
     // Writes a file and returns once the write completed (file XHR is
     // asynchronous even when asked to be synchronous).

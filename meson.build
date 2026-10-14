@@ -1,6 +1,6 @@
 project('cef-qml', 'cpp',
   version: '0.1.0',
-  meson_version: '>=1.1.0',
+  meson_version: '>=1.3.0',
   default_options: [
     'cpp_std=c++20',
     'buildtype=release',
@@ -32,6 +32,21 @@ endif
 # and the installed tree both work without environment variables.
 runtime_build_dir = meson.current_build_dir() / 'runtime'
 runtime_install_dir = prefix / runtime_dir
+plugin_install_dir = prefix / qml_dir / 'CefQml'
+
+# When the QML module and the runtime are both installed under the prefix,
+# the installed plugin's RPATH is relative to the plugin itself
+# ($ORIGIN/../../lib/cef-qml by default), so the prefix can be moved as a whole
+# (the prebuilt release tarball relies on this). If either one was pointed
+# outside the prefix (e.g. qml_dir set to the system Qt's import directory)
+# the two do not move together, and the absolute path is the robust choice.
+fs = import('fs')
+prefix_slash = prefix.endswith('/') ? prefix : prefix + '/'
+if plugin_install_dir.startswith(prefix_slash) and runtime_install_dir.startswith(prefix_slash)
+  plugin_install_rpath = '$ORIGIN' / fs.relative_to(runtime_install_dir, plugin_install_dir)
+else
+  plugin_install_rpath = runtime_install_dir
+endif
 
 subdir('runtime')
 subdir('CefQml')
@@ -43,14 +58,14 @@ endif
 run_tests = find_program('tests/run.sh')
 test('offscreen', run_tests,
   args: [meson.project_build_root(), 'offscreen'],
-  depends: [plugin, helper, stage_runtime],
+  depends: [plugin, qmldir_file, helper, stage_runtime],
   timeout: 300, is_parallel: false)
 # Headless weston has no seat, so windows never become active and window
 # shortcuts never fire; the browser suite (shortcut driven) runs offscreen.
 test('wayland', run_tests,
   args: [meson.project_build_root(), 'wayland'],
   env: ['TEST_INPUT=' + meson.current_source_dir() / 'tests' / 'tst_webview.qml'],
-  depends: [plugin, helper, stage_runtime],
+  depends: [plugin, qmldir_file, helper, stage_runtime],
   timeout: 300, is_parallel: false)
 
 # Drives the reference browser from outside over the remote-debugging port
@@ -61,6 +76,6 @@ if python3.found()
     args: [meson.current_source_dir() / 'tests' / 'cdp_remote.py',
            meson.project_build_root(),
            meson.current_source_dir() / 'examples' / 'browser' / 'main.qml'],
-    depends: [plugin, helper, stage_runtime],
+    depends: [plugin, qmldir_file, helper, stage_runtime],
     timeout: 120, is_parallel: false)
 endif

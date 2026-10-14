@@ -1,5 +1,7 @@
 #!/bin/sh
 # Usage: tests/run.sh <builddir> <offscreen|wayland> [qmltestrunner args...]
+# <builddir> is any directory containing the CefQml module: the build tree, or
+# the qml/ directory of an installed or extracted release tree.
 # TEST_INPUT selects a test file or directory (default: all tst_*.qml).
 #
 # offscreen: Qt offscreen platform, Chromium ozone "headless".
@@ -23,9 +25,12 @@ tmp=$(mktemp -d)
 trap 'kill $weston_pid 2>/dev/null || true; rm -rf "$tmp"' EXIT INT TERM
 weston_pid=
 export CEF_QML_CACHE_DIR="$tmp/profile"
-# tst_hotreload writes QML files here through XMLHttpRequest.
+# Scratch files (downloads; QML that tst_hotreload writes through
+# XMLHttpRequest). Kept out of <builddir> so the suites also run against an
+# installed or extracted tree (tests/run.sh <prefix>/qml offscreen).
+export CEF_QML_TEST_DIR="$tmp/data"
+mkdir -p "$CEF_QML_TEST_DIR/test-hotreload" "$CEF_QML_TEST_DIR/test-downloads"
 export QML_XHR_ALLOW_FILE_WRITE=1 QML_XHR_ALLOW_FILE_READ=1
-rm -rf "$builddir/test-hotreload"; mkdir -p "$builddir/test-hotreload"
 
 case $mode in
   offscreen)
