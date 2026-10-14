@@ -32,7 +32,7 @@ page, and a `confirm()` dialog drawn by `RequestOverlay`.*
 
 Contents: [Install](#install) · [Quickstart](#quickstart) ·
 [`CefQml` API](#cefqml-module-api) · [`CefQml.Components`](#cefqmlcomponents) ·
-[Hot reload](#hot-reload) · [Remote control (CDP)](#remote-control-chrome-devtools-protocol) ·
+[Sessions](#sessions) · [Hot reload](#hot-reload) · [Remote control (CDP)](#remote-control-chrome-devtools-protocol) ·
 [Environment variables](#environment-variables) · [Limitations](#limitations) ·
 [Testing](#testing) · [License](#license)
 
@@ -235,8 +235,8 @@ page while user scripts are registered, then loads `url`.
 | Property | Type | | Description |
 |---|---|---|---|
 | `url` | url | read/write | Current URL; setting it navigates. Follows in-page navigation. |
-| `title` | string | read-only | Page title. |
-| `icon` | url | read-only | Favicon URL. |
+| `title` | string | read/write | Page title. Writing sets a placeholder (e.g. a restored tab's saved title) until the page reports its own. |
+| `icon` | url | read/write | Favicon URL. Writable like `title`. |
 | `loading` | bool | read-only | A navigation is in progress. Wait for `false` before inspecting the page. |
 | `loadProgress` | real | read-only | 0..1. |
 | `canGoBack`, `canGoForward` | bool | read-only | History state. |
@@ -249,6 +249,7 @@ page while user scripts are registered, then loads `url`.
 | `frameRate` | int | read/write | Maximum frames per second, 1..240 (default 60). |
 | `active` | bool | read/write | `false` keeps the browser alive but stops rendering (as does `visible: false`). |
 | `ready` | bool | read-only | The underlying CEF browser exists. |
+| `discarded` | bool | read/write | `true` frees the browser (memory, processes) but keeps `url`, `title`, `icon`, `zoomFactor`, `audioMuted` and `userScripts`; `false` (or `reload()`) creates it again and loads `url`. Declared `true`, no browser is created until it turns `false`. Back/forward history and page state are lost; pending `devToolsMethod`/`evaluateJavaScript` calls are dropped, so re-run setup on `discardedChanged()`. |
 | `frameCount` | int | read-only | Frames received so far (notifies through `frameSwapped`). |
 | `userScripts` | list&lt;string&gt; | read/write | JavaScript sources run in every new document before the page's own scripts (`Page.addScriptToEvaluateOnNewDocument`). |
 
@@ -257,6 +258,8 @@ Enum `CefWebView.ConsoleLevel`: `Debug`, `Info`, `Warning`, `Error`.
 | Method | Description |
 |---|---|
 | `goBack()`, `goForward()` | Navigate history. |
+| `list navigationHistory()` | The back/forward list, oldest first: `[{ url, title, displayUrl, httpStatusCode, current, time }]` (`time`: a `Date`, when loaded). Empty without a browser. |
+| `bool goToHistoryEntry(int index)` | Go to entry `index` of `navigationHistory()`. |
 | `reload()`, `reloadIgnoringCache()`, `stop()` | |
 | `loadHtml(string html)` | Load an HTML string (as a `data:` URL). |
 | `runJavaScript(string script)` | Fire-and-forget JavaScript in the main frame. |
@@ -268,7 +271,7 @@ Enum `CefWebView.ConsoleLevel`: `Debug`, `Info`, `Warning`, `Error`.
 
 | Signal | Description |
 |---|---|
-| `urlChanged()`, `titleChanged()`, `iconChanged()`, `loadingChanged()`, `loadProgressChanged()`, `navigationStateChanged()` (`canGoBack`/`canGoForward`), `hoveredUrlChanged()`, `tooltipChanged()`, `zoomFactorChanged()`, `audioMutedChanged()`, `fullscreenChanged()`, `backgroundColorChanged()`, `frameRateChanged()`, `activeChanged()`, `readyChanged()`, `userScriptsChanged()` | Property notifications. |
+| `urlChanged()`, `titleChanged()`, `iconChanged()`, `loadingChanged()`, `loadProgressChanged()`, `navigationStateChanged()` (`canGoBack`/`canGoForward`), `hoveredUrlChanged()`, `tooltipChanged()`, `zoomFactorChanged()`, `audioMutedChanged()`, `fullscreenChanged()`, `backgroundColorChanged()`, `frameRateChanged()`, `activeChanged()`, `readyChanged()`, `userScriptsChanged()`, `discardedChanged()` | Property notifications. |
 | `frameSwapped()` | A new frame was rendered. |
 | `loadStarted(url url)` | A main-frame load (a new document) started. Not emitted for same-document navigations (`#fragment`, `history.pushState`). |
 | `loadFinished(url url, int httpStatusCode)` | Main frame finished loading. Chromium's error page for a failed load emits it too (after `loadFailed`). |
@@ -345,6 +348,7 @@ Downloads outlive the view that started them; all of them are listed in
 | `chromiumVersion` | e.g. `"154.0.8037.98"`. |
 | `runtimeDir` | Directory of the loaded `libcef.so` (helper, resources, locales). |
 | `profileDir` | Chromium profile directory in use (cookies, cache, local storage): `CEF_QML_CACHE_DIR`, the default profile, or a temporary one when another process holds it. Valid before the first view exists. |
+| `temporaryProfile` | `profileDir` is a temporary fallback (another process holds the configured profile). `SessionStore` does not write then. |
 | `dataDir` | Directory for the app's own data (`JsonStore` files): `<configured profile>/cefqml`, apart from Chromium's files. Unlike `profileDir` it never falls back to a temporary directory, so a second instance shares it. |
 | `downloads` | All `CefDownload`s of this process, oldest first (`downloadsChanged()`). |
 | `urlFromUserInput(string text)` | What an address bar does with typed text: `"example.com"` → `https://example.com`, `"/tmp/x.html"` → file URL, `"localhost:8080"` → `http://localhost:8080`. Returns an invalid (empty) URL for text that is not an address (e.g. a search query). |
@@ -546,11 +550,11 @@ through `Style`, or copy one as the starting point for your own.
 
 | Component | Purpose and key API |
 |---|---|
-| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts), `userScriptManager` (the `UserScriptManager` overlay), `userScriptManagerVisible`, `offerUserScriptInstall` (default true), `historyStore` (a `HistoryStore` on `history.json`; null disables history), `addressSuggestions` (the address bar's `AddressSuggestions`), `historyView` (the `HistoryView` overlay), `historyVisible`, `bookmarkStore` (a `BookmarkStore` on `bookmarks.json`; null disables bookmarks), `showBookmarksBar`, `bookmarksBar`, `bookmarkManager` (the `BookmarkManager` overlay), `bookmarkManagerVisible`. Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`, `showUserScripts()`, `hideUserScripts()`, `showHistory()`, `hideHistory()`, `showBookmarks()`, `hideBookmarks()`, `openBookmark(url, newTab)`, `reviewUserScript(url)`, `isUserScriptUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
+| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts), `userScriptManager` (the `UserScriptManager` overlay), `userScriptManagerVisible`, `offerUserScriptInstall` (default true), `historyStore` (a `HistoryStore` on `history.json`; null disables history), `addressSuggestions` (the address bar's `AddressSuggestions`), `historyView` (the `HistoryView` overlay), `historyVisible`, `bookmarkStore` (a `BookmarkStore` on `bookmarks.json`; null disables bookmarks), `showBookmarksBar`, `bookmarksBar`, `bookmarkManager` (the `BookmarkManager` overlay), `bookmarkManagerVisible`, `sessionStore` (a `SessionStore` on `<sessionName>.json`; null keeps no session), `sessionName` (default `"session"`; one per `Browser` of a process), `restoreSession` (`"always"`, `"never"` or `"ifCrashed"`, the default), `sessionRestored`, `tabMenu` (the tab strip's right-click menu), `recentlyClosedMenu` (a `RecentlyClosedMenu`). See [Sessions](#sessions). Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`, `showUserScripts()`, `hideUserScripts()`, `showHistory()`, `hideHistory()`, `showBookmarks()`, `hideBookmarks()`, `openBookmark(url, newTab)`, `showTabMenu(index, item, x, y)`, `reviewUserScript(url)`, `isUserScriptUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
 | `BrowserController` | Non-visual programmatic API over a `WebTabs` (`tabs`): navigation that reports its result, tab helpers, zoom, recently closed tabs. See below. |
 | `BrowserAction` | A named command: `name` (`"tab.new"`), `text`, `description`, `category`, `enabled`, `checkable`/`checked`, `defaultShortcuts`, signal `triggered(args)`, `trigger(args)`. |
 | `ActionRegistry` | A set of `BrowserAction`s looked up and run by name: `model` (for menus or a command palette), `count`, `action(name)`, `has(name)`, `names()`, `trigger(name, args)`, `add(action or { name, text, defaultShortcuts, onTriggered })`, `remove(nameOrAction)`, signal `actionTriggered(name, args)`. |
-| `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar`, `window`, `userScriptManager`, `historyView` and `bookmarkManager` (anything with `toggle()` and `visible`, e.g. a `PanelOverlay`), `bookmarkStore`, `bookmarkButton` and `bookmarksBarTarget` / `bookmarksBarProperty` (the object and boolean property `bookmarks.showBar` toggles; default property `"visible"`) they act on. |
+| `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar`, `window`, `userScriptManager`, `historyView` and `bookmarkManager` (anything with `toggle()` and `visible`, e.g. a `PanelOverlay`), `bookmarkStore`, `bookmarkButton` and `bookmarksBarTarget` / `bookmarksBarProperty` (the object and boolean property `bookmarks.showBar` toggles; default property `"visible"`), `recentlyClosedMenu` and `sessionStore` they act on. |
 | `KeyBindings` | Window-wide keyboard shortcuts for an `ActionRegistry` (`actions`): defaults from the actions, `bindings` overrides, conflict resolution, modes. See below. |
 | `UserScriptStore` | Installed userscripts and their GM values, persisted under `Cef.dataDir`, injected into attached views. See [Userscripts](#userscripts). |
 | `UserScriptManager` | Manager UI for a `UserScriptStore` (`store`), with `view` for "running on this page". See [Managing scripts](#managing-scripts). |
@@ -558,8 +562,10 @@ through `Style`, or copy one as the starting point for your own.
 | `BookmarkStore`, `BookmarkModel` | The bookmark tree and per-folder models (C++, `CefQml`). See [`BookmarkStore` and `BookmarkModel`](#bookmarkstore-and-bookmarkmodel). |
 | `BookmarkButton`, `BookmarksBar`, `BookmarkMenu`, `BookmarkEditor`, `BookmarkManager` | The star, the bookmarks bar, folder drop-downs, the edit card and the manager page. See [Bookmarks](#bookmarks). |
 | `PanelOverlay` | Modal panel host: dims the window, centres its content, closes on a backdrop click or Escape. See [History page](#history-page). |
-| `WebTabs` | Non-visual tab manager: one `CefWebView` per tab, stacked, only the current one visible. `views`, `count`, `currentIndex`, `currentView`, `homeUrl`, `viewDelegate` (a `Component` deriving from `CefWebView`), `openPopupsInNewTabs`, `closeOnRequest`, `userScriptStore` (a `UserScriptStore` injected into every tab), `historyStore` (a `HistoryStore` recording every tab's visits). `openTab(url, background, index)`, `closeTab(index)`, `moveTab(from, to)`, `closeAll()`, `indexOf(view)`, `urls()` / `restore(urls, current)` for sessions. Signals `tabOpened`, `tabClosed(view, index)`, `lastTabClosed`, `sessionChanged`, `contextMenuRequested(view, ...)`; set `interceptJavaScriptDialogs` / `interceptPermissions` / `interceptFileDialogs` / `interceptDownloads` to receive every tab's requests as `javaScriptDialogRequested(view, dialog)`, `permissionRequested(view, request)`, `fileDialogRequested(view, request)`, `downloadRequested(view, download)`. |
-| `TabStrip` | Horizontal tab bar for a `WebTabs` (`tabs`, required): click selects, middle click or × closes, + emits `newTabRequested()`. `maxTabWidth`, `minTabWidth`. |
+| `WebTabs` | Non-visual tab manager: one `CefWebView` per tab, stacked, only the current one visible. `views`, `count`, `currentIndex`, `currentView`, `homeUrl`, `viewDelegate` (a `Component` deriving from `CefWebView`), `openPopupsInNewTabs`, `closeOnRequest`, `userScriptStore` (a `UserScriptStore` injected into every tab), `historyStore` (a `HistoryStore` recording every tab's visits). `openTab(url, background, index, properties)` (`properties` are set on the new view, e.g. `{ discarded: true, title: "…" }`), `closeTab(index)`, `moveTab(from, to)`, `closeAll()`, `indexOf(view)`, `discard(index)` (frees a background tab's browser; it reloads when selected), `urls()`, `restore(entries, current, { lazy, append })` (entries are URLs or `{ url, title, icon, zoom, muted }`; `lazy` opens background tabs discarded; returns the new views). The current tab is never discarded. Signals `tabOpened`, `tabClosed(view, index)`, `lastTabClosed`, `sessionChanged`, `contextMenuRequested(view, ...)`; set `interceptJavaScriptDialogs` / `interceptPermissions` / `interceptFileDialogs` / `interceptDownloads` to receive every tab's requests as `javaScriptDialogRequested(view, dialog)`, `permissionRequested(view, request)`, `fileDialogRequested(view, request)`, `downloadRequested(view, download)`. |
+| `TabStrip` | Horizontal tab bar for a `WebTabs` (`tabs`, required): click selects, middle click or × closes, + emits `newTabRequested()`, right click emits `contextMenuRequested(index, x, y)` (strip coordinates). Discarded tabs are dimmed. `maxTabWidth`, `minTabWidth`. |
+| `SessionStore` | Saves and restores a `WebTabs`' tabs and a `BrowserController`'s recently closed tabs. See [Sessions](#sessions). |
+| `RecentlyClosedMenu` | Menu of a `BrowserController`'s (`controller`) recently closed tabs; a click reopens one. See [Sessions](#sessions). |
 | `NavigationBar` | Back / forward / reload-stop, an `AddressField`, a bookmark star (when `bookmarkStore` is set) and a load-progress line for `view`. `addressField`, `searchUrl`, `bookmarkStore`, `bookmarkButton`; children are placed after the address field (e.g. a menu button). |
 | `AddressField` | URL/search field bound to `view`: shows the page URL while not edited; Enter navigates, non-addresses are searched with `searchUrl` (`%s` = query); Escape restores the page URL, a second Escape (or one with nothing edited) returns focus to the page. `text`, `input`, `isInternalUrl` (urls shown as an empty field), `suggestions` (set by `AddressSuggestions`), `urlFor(text)`, `go(url)` (load in `view` and focus it; the same URL reloads), `focusAndSelect()`, signal `navigated(url)`. |
 | `AddressSuggestions` | Drop-down and inline autocompletion for an `AddressField` from open tabs, a `HistoryStore` and your own providers. See [Address bar suggestions](#address-bar-suggestions). |
@@ -792,6 +798,78 @@ manager or suggestions), `showBookmarksBar` (default true), `bookmarksBar`,
 `hideBookmarks()` and `openBookmark(url, newTab)` (in the current tab, or a
 background tab next to it, as the bar and manager do).
 
+### Sessions
+
+`SessionStore` keeps the open tabs of a `WebTabs` (URL, title, favicon, zoom,
+mute, which tab is current) and the recently closed tabs of a
+`BrowserController` in `Cef.dataDir/<name>.json`, and reopens them:
+
+```qml
+WebTabs { id: tabs; anchors.fill: parent }
+BrowserController { id: ctl; tabs: tabs }
+SessionStore { id: session; tabs: tabs; controller: ctl }   // Cef.dataDir/session.json
+Component.onCompleted: {
+    // Reopen last time's tabs; background tabs stay unloaded until selected.
+    if (session.restore().length === 0) tabs.openTab("https://example.com")
+}
+```
+
+It writes at most `saveDelay` ms (default 1000) after a change (tabs opened,
+closed, moved or selected, navigations, titles, zoom, ...) and when the
+application quits or the store is destroyed. While the app runs, the file is
+marked as running: if the next start still finds the mark, the previous run
+crashed (`crashed`). The session read at start-up stays available as `saved`
+until `restore()` uses it, even after the file has been overwritten, so a
+"Restore previous session" action works at any time.
+
+| `SessionStore` | |
+|---|---|
+| `tabs`, `controller` | The `WebTabs` to save and restore, and the `BrowserController` whose `closedTabs` are kept (optional). Closed tabs are put back into `controller.closedTabs` at start-up whatever the restore policy. |
+| `name` | File name without `.json`, under `Cef.dataDir` (default `"session"`). Give each store of a process its own name: a second store on the same file warns and does not write. |
+| `enabled` | Write the file (default: `!Cef.temporaryProfile`, so a second process sharing the profile leaves the first one's session alone). A disabled store still reads it. |
+| `saveDelay`, `lazy` | Debounce in ms; `restore()`'s default for `lazy` (true). |
+| `isInternalUrl`, `internalTabUrl` | Tabs whose URL satisfies `isInternalUrl` (default: the controller's) are saved without their URL (e.g. a big `data:` new-tab page) and restored as `internalTabUrl` (default `tabs.homeUrl`). |
+| `maxIconLength` | Favicons (often `data:` URLs) longer than this are not saved (default 4096). |
+| `saved`, `hasSavedSession`, `crashed`, `loaded`, `filePath` | Read-only. `saved` is `{ tabs: [{ url, title, icon, zoom, muted, internal }], current, closed, savedAt }` or null. |
+| `restore(options)` | Opens the saved tabs, selects the saved current tab and returns the new views. `options`: `replace` (close the open tabs first; default: add after them), `lazy`, `session` (restore this object instead, e.g. an earlier `snapshot()`; `saved` is kept). |
+| `snapshot()`, `save()`, `clear()` | The current state as it is saved; write now; forget `saved` and the closed tabs. |
+
+**Lazy tabs.** With `lazy`, background tabs restore *discarded*
+(`CefWebView.discarded`): the view exists and shows its saved title and
+favicon in the tab strip, but no Chromium browser is created until the tab is
+selected (or navigated or reloaded). `WebTabs.discard(index)` /
+`BrowserController.discardTab(tab)` / the `tab.discardOthers` action do the
+same to a loaded background tab to free its memory.
+
+**History.** Only each tab's current page is restored, not its back/forward
+list: Chromium cannot rebuild a navigation history from the outside (CEF has
+no session-restore API, and replaying the URLs would reload every page).
+`CefWebView.navigationHistory()` lists a live tab's entries, e.g. for a
+back-button menu, and `goToHistoryEntry(i)` jumps to one.
+
+**Recently closed tabs.** `controller.closedTabs` holds the last
+`closedTabsLimit` (25) closed tabs; `reopenClosedTab(i)` brings one back at
+its old position. `RecentlyClosedMenu` lists them, most recent first:
+
+```qml
+RecentlyClosedMenu { id: closedMenu; controller: ctl }
+IconButton { text: "↺"; onClicked: closedMenu.popup(this, 0, height) }
+```
+
+Properties `maxEntries` (15), `showReopenAllEntry`, `showClearEntry`, signal
+`reopened(view)`; `popup(item, x, y)`, `close()`, `trigger(i)`.
+
+**In `Browser`.** A `SessionStore` named `sessionName` (`"session"`) exists by
+default (`sessionStore: null` removes it). `restoreSession` decides what
+start-up does: `"ifCrashed"` (default) reopens the session only after a crash,
+`"always"` every time, `"never"` not at all; the `session.restore` action
+reopens it later. `initialUrls` open after the restored tabs, and the first
+of them is selected (so a URL given on the command line shows up in front of
+the old session); with neither, one home tab opens. `sessionRestored` tells
+whether the session was reopened. Right-clicking a tab opens `tabMenu`
+(reload, duplicate, mute, discard, close others / to the right, reopen,
+recently closed tabs); `tab.recentlyClosed` shows `recentlyClosedMenu`.
+
 ### Userscripts
 
 Greasemonkey / Tampermonkey / Violentmonkey-style userscripts, injected
@@ -960,7 +1038,10 @@ and the same pieces work in a layout of your own.
 | `tab.next`, `tab.previous` | Ctrl+Tab, Ctrl+PgDown / Ctrl+Shift+Tab, Ctrl+PgUp | |
 | `tab.select` | Ctrl+1..8 (tabs 1..8), Ctrl+9 (last tab) | `{ index }` (negative: from the end) |
 | `tab.duplicate` | | |
-| `tab.reopenClosed` | Ctrl+Shift+T | |
+| `tab.reopenClosed` | Ctrl+Shift+T | `{ index }` into `closedTabs` (default: the most recent) |
+| `tab.recentlyClosed` | | shows the `recentlyClosedMenu`; `{ item, x, y }` places it |
+| `tab.discardOthers` | | discards every background tab |
+| `session.restore` | | reopens the saved session (`sessionStore.restore()`); enabled while there is one |
 | `nav.back`, `nav.forward` | Alt+Left, Alt+Right | |
 | `nav.reload`, `nav.reloadHard` | Ctrl+R, F5 / Ctrl+Shift+R, Shift+F5 | |
 | `nav.stop`, `nav.home` | – / Alt+Home | |
@@ -1077,7 +1158,9 @@ browser.navigate("https://example.org/slow", { tab: 2, timeout: 10000 })
 | `closeTab(tab)`, `selectTab(tab)`, `moveTab(tab, to)`, `duplicateTab(tab)`, `nextTab()`, `previousTab()` | `tab` is an index (negative counts from the end), a view, or nothing for the current tab. Return `false` when there is no such tab. |
 | `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `home(tab)`, `zoomIn(tab)`, `zoomOut(tab)`, `resetZoom(tab)` | |
 | `viewAt(tab)`, `indexOf(tab)`, `findTab(predicate(view, index))`, `findTabs(predicate)`, `tabForUrl(url or RegExp)` | Lookup; `findTab` and `tabForUrl` return the first match or `null`. |
-| `reopenClosedTab()`, `closedTabs` | Recently closed tabs (`{ url, index }`, at most `closedTabsLimit`). |
+| `closedTabs` | Recently closed tabs, most recent last: `[{ url, title, icon, index, time, zoom }]` (`index`: position when closed; `time`: ms since the epoch), at most `closedTabsLimit` (25). Writable; a `SessionStore` persists it. Internal pages (`isInternalUrl`) are not remembered. |
+| `reopenClosedTab(i)`, `forgetClosedTab(i)`, `clearClosedTabs()` | Reopen `closedTabs[i]` (default: the most recent) at its old position with its title, icon and zoom, and return the view; remove one; remove all. |
+| `discardTab(tab)` | Free a background tab's browser (`WebTabs.discard()`). |
 | `currentView`, `count`, `currentIndex`, `searchUrl`, `zoomStep`, `isInternalUrl`, `urlFor(text)` | |
 
 ```qml
@@ -1112,8 +1195,11 @@ keys while it is disabled, so several can take turns, but keep your own
 
 `examples/browser/dev.qml` runs the reference browser under `HotReload`: edit
 `examples/browser/BrowserApp.qml` (or any QML next to it), save, and the UI
-reloads in place, keeping its tabs (`BrowserApp` saves them in
-`hotReload.state` on `aboutToReload`).
+reloads in place, keeping its tabs: the app's `SessionStore` writes them on
+destruction and the new `Browser` restores them (`restoreSession: "always"`;
+with a temporary profile, where the store does not write, `BrowserApp` passes
+a `snapshot()` through `hotReload.state` instead). Command-line URLs are only
+opened by the first load (`hotReload.generation === 0`).
 
 ```sh
 QML_IMPORT_PATH=build /usr/lib/qt6/bin/qml examples/browser/dev.qml
@@ -1178,6 +1264,8 @@ Qt logging: the plugin logs under the category `cefqml`
 - **Headless Ozone by default.** Off-screen browsers never create native
   surfaces, so Chromium runs with the `headless` Ozone platform (or `x11` on
   X11); its clipboard is bridged through Qt's clipboard.
+- **Sessions** restore each tab's current page, title, favicon, zoom and
+  mute state, not its back/forward history or form contents.
 - **One CEF per process**, initialized on first use, shut down when the Qt
   application exits. One browser process per profile directory.
 - Linux x86_64 only. Tested with Qt 6.4.2 (Ubuntu 24.04), offscreen and

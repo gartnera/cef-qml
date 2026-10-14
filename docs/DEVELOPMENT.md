@@ -39,6 +39,9 @@ Notes for contributors (human or agent). Read this before changing anything.
   Bookmark UI: `BookmarkButton.qml` (star), `BookmarksBar.qml`,
   `BookmarkMenu.qml` (folder drop-downs), `BookmarkEditor.qml` (edit card),
   `BookmarkManager.qml` and the internal `PopupMenu.qml` (context menus).
+  Sessions: `SessionStore.qml` (session file, crash mark, restore),
+  `SessionRegistry.js` (one writer per session file in a process) and
+  `RecentlyClosedMenu.qml`.
 - `examples/browser/` — the reference application (`main.qml`, `dev.qml` for
   live reload, `BrowserApp.qml`).
 - `tests/` — `qmltestrunner` suites, run by `tests/run.sh` (via `meson test`),
@@ -185,7 +188,11 @@ signal kills the process the default way.
   again; build a new object to move a key to the end (`KeyBindings.bind`
   relies on key order).
 - `url.toString()` in QML decodes `%20` and the like; keep `url` values
-  (not their text) when the URL is loaded again, or it is typed text.
+  (not their text) when the URL goes through `urlFor()` (typed text) again.
+  Assigning the decoded string straight to a `url` property re-encodes it,
+  which is how `closedTabs` and the session file store URLs (and why
+  `reopenClosedTab()` bypasses `urlFor()`). Test pages without spaces
+  (`tst_session.qml`) compare as strings.
 - `CefWebView.loadStarted` exists so that waiting for a load
   (`BrowserController.whenLoaded`) does not take the previous page's
   `loadFinished`; `loadFinished` alone cannot tell the two apart.
@@ -279,6 +286,43 @@ signal kills the process the default way.
   same scope (`property Item menu: menu`) binds to itself; use distinct ids.
 - QML's `URL` mangles `data:` URLs (and `new URL(rel, base)` with them);
   leave absolute URLs alone.
+- Sessions / discarded tabs:
+  - `CefWebView.discarded` releases the browser like destruction does
+    (`detachView`, `closeBrowser`) and clears the DevTools queue, pending
+    callbacks, request objects and bootstrap state; the next browser starts
+    over with the about:blank bootstrap. Anything that set the view up
+    through DevTools must do it again: `UserScriptStore` listens to
+    `discardedChanged` and re-registers (its old replies never arrive).
+    `HistoryTracker` only uses signals and needs nothing.
+  - A view declared `discarded: true` creates no browser at
+    `componentComplete`; `title`/`icon` are writable placeholders and
+    `cefIconChange` ignores the bootstrap page's (empty) favicon.
+  - `navigationHistory()` hides the bootstrap `about:blank` entry while
+    `m_dropInitialHistoryEntry` is set, and `goToHistoryEntry(i)` maps `i`
+    from the end of DevTools' list (which may still contain it).
+  - `SessionStore` writes running:true at start-up *with the previously
+    saved tabs* (not the still-empty WebTabs), so a crash during start-up
+    keeps them; the next change overwrites them. `saved` keeps the old
+    session in memory for a later `restore()`.
+  - The save timer does not restart on every change (a page that changes
+    its title every second would postpone the save forever).
+  - Every suite shares `Cef.dataDir`, so every default `Browser` writes
+    `session.json`. Stores in tests use their own `tst-session-*` names,
+    and only one store per process may write a file (`SessionRegistry.js`
+    warns otherwise); a store releases its file in `onDestruction`, which
+    is deferred, so wait for the file's `running: false` before creating
+    the next store on it. `tst_session.qml` empties its files in
+    `cleanupTestCase`.
+  - An object-valued default property (`property SessionStore sessionStore:
+    SessionStore {}`) is still created when `createObject(..., {
+    sessionStore: null })` replaces it; `Browser`'s default store therefore
+    goes inert (`name: ""`, no tabs) unless it is the current value.
+  - `HotReload.generation` is incremented after the new tree is created,
+    so a tree's `Component.onCompleted` sees the number of earlier loads:
+    0 for the first load, 1 for the first reload. `BrowserApp` opens
+    command-line URLs only at 0. On reload the old tree is deleted
+    synchronously before the new one loads, so the old `SessionStore` has
+    written the session file (and released it) by then.
 - `destroy()` is deferred: a test that checks a `JsonStore` flush on
   destruction must wait (`tryVerify`) for it.
 - C string hex escapes are greedy: write `"\x01" "cefqml:..."`, not
