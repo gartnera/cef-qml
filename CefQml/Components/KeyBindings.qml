@@ -210,8 +210,11 @@ Item {
             sequence: active ? modelData.sequence : ""
             context: kb.context
             onActivated: {
-                if (kb.actions && kb.actions.trigger(modelData.name, modelData.args))
-                    kb.activated(modelData.name, modelData.args)
+                // The action may change the bindings (e.g. the mode), which
+                // removes this delegate and its context (modelData, kb).
+                const bindings = kb, name = modelData.name, args = modelData.args
+                if (bindings.actions && bindings.actions.trigger(name, args))
+                    bindings.activated(name, args)
             }
             onActivatedAmbiguously: console.warn("KeyBindings: ambiguous shortcut", modelData.sequence,
                                                  "(also bound outside this KeyBindings?)")
