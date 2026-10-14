@@ -50,6 +50,8 @@ Notes for contributors (human or agent). Read this before changing anything.
   and `PageTools.js` (the in-page library run in an isolated world:
   collecting hint targets, click points, `focusInput`, `scroll`; label
   generation), also used by `BrowserController.scrollPage` / `focusInput`.
+  DevTools: `DevToolsPanel.qml` (docking, splitter, tab and window modes;
+  the frontend bridge itself is C++, "DevTools" in `cefwebview.cpp`).
 - `examples/browser/` — the reference application (`main.qml`, `dev.qml` for
   live reload, `BrowserApp.qml`).
 - `tests/` — `qmltestrunner` suites, run by `tests/run.sh` (via `meson test`),
@@ -456,6 +458,61 @@ signal kills the process the default way.
     "prompt") because `SiteSettings.apply()` pushed it before the load.
     Media requests (`getUserMedia`) need `--use-fake-device-for-media-stream`
     to get as far as `OnRequestMediaAccessPermission`.
+- DevTools (`devToolsFor`, `DevToolsPanel`):
+  - `CefBrowserHost::ShowDevTools` is unusable off-screen: in CEF 154 it
+    always opens a Chrome-style native top-level window, whatever the
+    window info says ("Windowless rendering is not supported for this
+    DevTools window"). The frontend is therefore an ordinary off-screen
+    browser on `devtools://devtools/bundled/devtools_app.html?ws=...`
+    whose `WebSocket` a shim (`kDevToolsShim`, added with
+    `Page.addScriptToEvaluateOnNewDocument`) replaces with a bridge; the
+    comment at "DevTools" in `cefwebview.cpp` has the message flow. Do not
+    switch to a remote-debugging port for this: it needs the port open for
+    every app and every local process.
+  - The bridge binding (`Runtime.addBinding`) only reaches the host after
+    `Runtime.enable` on the frontend browser, and both must be in place
+    before the frontend document loads (the shim runs once, at document
+    start): the frontend browser is created on `about:blank` and set up
+    before it loads the frontend URL, like the user-script bootstrap.
+  - The frontend's session is a child session of the inspected browser
+    (`Target.attachToTarget` to its own target, `flatten: true`).
+    `CefQmlClient::OnDevToolsMessage` routes every message that ends in
+    `,"sessionId":"<id>"}` (Chromium appends it last) to the view and
+    returns true, so CEF's own observers (`devToolsMethod`, events) only
+    see the root session. The shim adds the root child session's id to the
+    frontend's messages and strips it from the replies, because the
+    frontend expects to be the root of its connection.
+  - The token the host gives the frontend's main frame is the only
+    authority: the binding exists in every frame of the frontend (and
+    `devtools:` pages can embed others), so messages without the token are
+    dropped. A frontend view never leaves `devtools:` (`cefAllowNavigation`
+    allows only that and `about:blank`), and `setUrl` ignores anything else
+    while `devToolsFor` is set: property initialization order in
+    `createObject(..., { devToolsFor, url })` then does not matter.
+  - Overlay.inspectNodeRequested is what makes the frontend reveal a node
+    (`inspectElementAt`); it is synthesized only after the frontend's own
+    `Overlay.enable` reply, otherwise the frontend's Elements panel is not
+    listening yet and the event is lost.
+  - `DevToolsPanel` connects to views it does not own. In teardown (hot
+    reload, test exit) the QML context of the panel can be gone before the
+    views' signals stop: every handler checks `alive()` (entry not dead,
+    panel not null and not `_dying`), and `Component.onDestruction`
+    disconnects all entries. Calling a function through `panel.` (not bare)
+    keeps a dead context from turning into a ReferenceError.
+  - The offscreen QPA warns "This plugin does not support raise()": the
+    panel raises a DevTools window only when it is already visible.
+  - Tests probe the frontend through its own modules
+    (`import('./ui/legacy/legacy.js')`, `./core/sdk/sdk.js`): the inspected
+    URL of `primaryPageTarget()`, the selected `DOMNode` flavor of
+    `UI.Context` and `InspectorView`'s current panel. Evaluating in the
+    page through the frontend's `RuntimeModel` proves the whole round trip.
+    The frontend takes a few seconds to load; waits use 15 s timeouts.
+  - `Browser` binds F12 and Ctrl+Shift+I (`devtools.toggle`): other test
+    registries in a `Browser`'s window must not use those keys (ambiguous
+    shortcuts never fire; `tst_actions.qml` uses F10).
+  - DevTools tabs are `WebTabs` tabs: `SessionStore` skips views with
+    `devToolsFor`, and `BrowserController` keeps them (and `devtools:` URLs)
+    out of `closedTabs`.
 - QML TestCase:
   - A function whose name ends in `_data` is a data provider for the
     test of the same name without it and is never run as a test

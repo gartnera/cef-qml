@@ -30,6 +30,11 @@ Item {
         //     "app.copyTitle": ["Ctrl+Shift+C"],
         // })
 
+        // DevTools: F12 / Ctrl+Shift+I toggle them for the current tab,
+        // right click > Inspect reveals an element. They open docked at
+        // the bottom; the header buttons (or this) move them:
+        // devTools: "right"   // or "bottom", "tab", "window"
+
         // Userscripts: Ctrl+Shift+U opens the manager; opening a *.user.js
         // URL offers to install it. browser.userScriptStore holds them
         // (Cef.dataDir/userscripts); userScriptStore: null turns them off.

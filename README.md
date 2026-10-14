@@ -6,8 +6,8 @@ QML bindings for the [Chromium Embedded Framework](https://github.com/chromiumem
 cef-qml gives you the primitives to build **your own web browser in QML**, the
 way [Quickshell](https://quickshell.outfoxxed.me/) gives you the primitives to
 build your own desktop shell: a Chromium web view item, decision requests
-(dialogs, permissions, file pickers, downloads), DevTools-protocol scripting
-and live QML reloading, plus a library of ready-made browser building blocks
+(dialogs, permissions, file pickers, downloads), DevTools-protocol scripting,
+Chromium's DevTools inspector inside the scene and live QML reloading, plus a library of ready-made browser building blocks
 (tabs, address bar, find bar, ...). A complete reference browser built from
 those blocks is included.
 
@@ -32,7 +32,7 @@ page, and a `confirm()` dialog drawn by `RequestOverlay`.*
 
 Contents: [Install](#install) · [Quickstart](#quickstart) ·
 [`CefQml` API](#cefqml-module-api) · [`CefQml.Components`](#cefqmlcomponents) ·
-[Sessions](#sessions) · [Hot reload](#hot-reload) · [Remote control (CDP)](#remote-control-chrome-devtools-protocol) ·
+[Sessions](#sessions) · [DevTools](#devtools) · [Hot reload](#hot-reload) · [Remote control (CDP)](#remote-control-chrome-devtools-protocol) ·
 [Environment variables](#environment-variables) · [Limitations](#limitations) ·
 [Testing](#testing) · [License](#license)
 
@@ -255,6 +255,10 @@ page while user scripts are registered, then loads `url`.
 | `secure` | bool | read-only | Connection security of the current page: `true` for https (or wss) with a valid certificate and no mixed content. Updated as the page loads (`securityChanged()`). |
 | `certificate` | object | read-only | Certificate summary of the current page, `{}` for non-TLS pages: `{ subject, issuer, organization, validFrom, validTo (Date), errors (["date-invalid", "authority-invalid", ...]), mixedContent (bool), protocol ("TLS 1.3") }`. |
 | `editableFocused` | bool | read-only | The focused element of the page takes typed text: an enabled text `<input>`, `<textarea>` or `<select>`, a `contenteditable` element or a `designMode` document (in the main frame or a same-process iframe). Tracked by focus events in the page: it is false while the view itself does not have the keyboard focus. Use it to give single-key bindings to the page only while the user is not typing (see [Link hints and keyboard browsing](#link-hints-and-keyboard-browsing)). |
+| `devToolsFor` | CefWebView | read/write | Makes this view the DevTools inspector of another view: it shows Chromium's DevTools frontend connected in-process to that view (no native window, no port; see [DevTools](#devtools)). One frontend per inspected view: the newest wins. While set, `url` is the frontend's `devtools:` URL and writing `url` is ignored. `null` releases the frontend's browser. |
+| `devToolsView` | CefWebView | read-only | On the inspected side: the view showing this view's DevTools, or `null`. |
+| `hasDevTools` | bool | read-only | `devToolsView` is set. |
+| `devToolsConnected` | bool | read-only | On the frontend side: the frontend is connected to the inspected page (false while either side loads or is discarded). |
 
 Enum `CefWebView.ConsoleLevel`: `Debug`, `Info`, `Warning`, `Error`.
 
@@ -268,6 +272,8 @@ Enum `CefWebView.ConsoleLevel`: `Debug`, `Info`, `Warning`, `Error`.
 | `runJavaScript(string script)` | Fire-and-forget JavaScript in the main frame. |
 | `evaluateJavaScript(string script, function callback(result, error))` | Evaluate in the main frame; promises are awaited and the result must be JSON-serializable. On failure `result` is `undefined` and `error` is a message. |
 | `int devToolsMethod(string method, object params = {}, function callback(result, error))` | Call any [Chrome DevTools Protocol](https://chromedevtools.github.io/devtools-protocol/) method. Calls made before the browser exists are queued. Returns the message id. |
+| `closeDevTools()` | Closes this view's DevTools: the frontend is released and emits `closeRequested`. The page keeps running; breakpoints, highlights and other DevTools state go with the session. |
+| `inspectElementAt(real x, real y)` | Reveals the element at (x, y) (item coordinates) in the Elements panel of this view's DevTools; they must be open or opened right after (it applies once the frontend connects). |
 | `find(string text, bool forward = true, bool matchCase = false)` | Find in page; results arrive through `findResult`. Repeat with the same text for the next match. |
 | `stopFinding(bool clearSelection = true)` | |
 | `copy()`, `cut()`, `paste()`, `selectAll()`, `undo()`, `redo()` | Edit commands on the focused frame (`paste()` uses the system clipboard). |
@@ -278,14 +284,14 @@ Enum `CefWebView.ConsoleLevel`: `Debug`, `Info`, `Warning`, `Error`.
 
 | Signal | Description |
 |---|---|
-| `urlChanged()`, `titleChanged()`, `iconChanged()`, `loadingChanged()`, `loadProgressChanged()`, `navigationStateChanged()` (`canGoBack`/`canGoForward`), `hoveredUrlChanged()`, `tooltipChanged()`, `zoomFactorChanged()`, `audioMutedChanged()`, `fullscreenChanged()`, `backgroundColorChanged()`, `frameRateChanged()`, `activeChanged()`, `readyChanged()`, `userScriptsChanged()`, `discardedChanged()`, `editableFocusedChanged()`, `securityChanged()` (`secure`/`certificate`) | Property notifications. |
+| `urlChanged()`, `titleChanged()`, `iconChanged()`, `loadingChanged()`, `loadProgressChanged()`, `navigationStateChanged()` (`canGoBack`/`canGoForward`), `hoveredUrlChanged()`, `tooltipChanged()`, `zoomFactorChanged()`, `audioMutedChanged()`, `fullscreenChanged()`, `backgroundColorChanged()`, `frameRateChanged()`, `activeChanged()`, `readyChanged()`, `userScriptsChanged()`, `discardedChanged()`, `editableFocusedChanged()`, `securityChanged()` (`secure`/`certificate`), `devToolsForChanged()`, `devToolsChanged()` (`devToolsView`/`hasDevTools`), `devToolsConnectedChanged()` | Property notifications. |
 | `navigationRequested(url url, bool userGesture, bool isRedirect)` | Emitted synchronously before a main-frame navigation sends its request (also for each redirect and for loads started by the host), so a handler can prepare per-site state, e.g. `Cef.setContentSetting()` for the target (`WebTabs` calls `SiteSettings.apply()` here). Not emitted for same-document navigations. |
 | `frameSwapped()` | A new frame was rendered. |
 | `loadStarted(url url)` | A main-frame load (a new document) started. Not emitted for same-document navigations (`#fragment`, `history.pushState`). |
 | `loadFinished(url url, int httpStatusCode)` | Main frame finished loading. Chromium's error page for a failed load emits it too (after `loadFailed`). |
 | `loadFailed(int errorCode, string errorText, url failedUrl)` | Main frame failed to load (Chromium `net::Error` code). |
 | `newWindowRequested(url url, bool userGesture, bool background)` | `target=_blank`, `window.open()`, middle click, ... If nothing is connected, the URL opens in this view. |
-| `closeRequested()` | The page called `window.close()`. |
+| `closeRequested()` | The page called `window.close()`. A DevTools frontend (`devToolsFor`) also emits it when its DevTools go away: `closeDevTools()`, a newer frontend for the same view, or the inspected browser closing (tab closed or discarded). |
 | `consoleMessage(int level, string message, string source, int line)` | `console.*` output of the page (`level` is a `ConsoleLevel`). |
 | `contextMenuRequested(real x, real y, url linkUrl, string selectedText, bool editable)` | Right click, in item coordinates. Chromium's own menu is never shown; draw your own (see `ContextMenu`). |
 | `renderProcessTerminated(int status)` | The renderer crashed or was killed; `reload()` to recover. |
@@ -636,11 +642,11 @@ through `Style`, or copy one as the starting point for your own.
 
 | Component | Purpose and key API |
 |---|---|
-| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts), `userScriptManager` (the `UserScriptManager` overlay), `userScriptManagerVisible`, `offerUserScriptInstall` (default true), `historyStore` (a `HistoryStore` on `history.json`; null disables history), `addressSuggestions` (the address bar's `AddressSuggestions`), `historyView` (the `HistoryView` overlay), `historyVisible`, `bookmarkStore` (a `BookmarkStore` on `bookmarks.json`; null disables bookmarks), `showBookmarksBar`, `bookmarksBar`, `bookmarkManager` (the `BookmarkManager` overlay), `bookmarkManagerVisible`, `siteSettings` (a `SiteSettings` on `site-settings.json`; null disables per-site settings), `siteSettingsManager` (the `SiteSettingsManager` overlay), `siteSettingsVisible`, `sessionStore` (a `SessionStore` on `<sessionName>.json`; null keeps no session), `sessionName` (default `"session"`; one per `Browser` of a process), `restoreSession` (`"always"`, `"never"` or `"ifCrashed"`, the default), `sessionRestored`, `tabMenu` (the tab strip's right-click menu), `recentlyClosedMenu` (a `RecentlyClosedMenu`), `commandPalette` (a `CommandPalette`), `commandPaletteVisible`, `linkHints` (a `LinkHints` over the current tab). See [Sessions](#sessions), [Site settings](#site-settings), [Command palette](#command-palette) and [Link hints](#link-hints-and-keyboard-browsing). Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`, `showUserScripts()`, `hideUserScripts()`, `showHistory()`, `hideHistory()`, `showBookmarks()`, `hideBookmarks()`, `showCommandPalette(prefix)`, `hideCommandPalette()`, `showSiteInfo()`, `hideSiteInfo()`, `showSiteSettings()`, `hideSiteSettings()`, `openBookmark(url, newTab)`, `showTabMenu(index, item, x, y)`, `reviewUserScript(url)`, `isUserScriptUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
+| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts), `userScriptManager` (the `UserScriptManager` overlay), `userScriptManagerVisible`, `offerUserScriptInstall` (default true), `historyStore` (a `HistoryStore` on `history.json`; null disables history), `addressSuggestions` (the address bar's `AddressSuggestions`), `historyView` (the `HistoryView` overlay), `historyVisible`, `bookmarkStore` (a `BookmarkStore` on `bookmarks.json`; null disables bookmarks), `showBookmarksBar`, `bookmarksBar`, `bookmarkManager` (the `BookmarkManager` overlay), `bookmarkManagerVisible`, `siteSettings` (a `SiteSettings` on `site-settings.json`; null disables per-site settings), `siteSettingsManager` (the `SiteSettingsManager` overlay), `siteSettingsVisible`, `sessionStore` (a `SessionStore` on `<sessionName>.json`; null keeps no session), `sessionName` (default `"session"`; one per `Browser` of a process), `restoreSession` (`"always"`, `"never"` or `"ifCrashed"`, the default), `sessionRestored`, `tabMenu` (the tab strip's right-click menu), `recentlyClosedMenu` (a `RecentlyClosedMenu`), `commandPalette` (a `CommandPalette`), `commandPaletteVisible`, `linkHints` (a `LinkHints` over the current tab), `devTools` (where DevTools open: `"bottom"`, the default, `"right"`, `"tab"` or `"window"`; the dock buttons change it), `devToolsPanel` (the `DevToolsPanel` around the tabs). See [Sessions](#sessions), [Site settings](#site-settings), [Command palette](#command-palette), [Link hints](#link-hints-and-keyboard-browsing) and [DevTools](#devtools). Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`, `showUserScripts()`, `hideUserScripts()`, `showHistory()`, `hideHistory()`, `showBookmarks()`, `hideBookmarks()`, `showCommandPalette(prefix)`, `hideCommandPalette()`, `showSiteInfo()`, `hideSiteInfo()`, `showSiteSettings()`, `hideSiteSettings()`, `openBookmark(url, newTab)`, `showTabMenu(index, item, x, y)`, `reviewUserScript(url)`, `isUserScriptUrl(url)`, `showDevTools(tab)`, `closeDevTools(tab)`, `toggleDevTools(tab)`, `inspectElement(x, y, tab)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
 | `BrowserController` | Non-visual programmatic API over a `WebTabs` (`tabs`): navigation that reports its result, tab helpers, zoom, recently closed tabs. See below. |
 | `BrowserAction` | A named command: `name` (`"tab.new"`), `text`, `description`, `category`, `enabled`, `checkable`/`checked`, `defaultShortcuts`, `showInPalette` (default true; false for actions that need arguments), signal `triggered(args)`, `trigger(args)`. |
 | `ActionRegistry` | A set of `BrowserAction`s looked up and run by name: `model` (for menus or a command palette), `count`, `action(name)`, `has(name)`, `names()`, `trigger(name, args)`, `add(action or { name, text, defaultShortcuts, onTriggered })`, `remove(nameOrAction)`, signal `actionTriggered(name, args)`. |
-| `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar`, `window`, `userScriptManager`, `historyView` and `bookmarkManager` (anything with `toggle()` and `visible`, e.g. a `PanelOverlay`), `bookmarkStore`, `bookmarkButton` and `bookmarksBarTarget` / `bookmarksBarProperty` (the object and boolean property `bookmarks.showBar` toggles; default property `"visible"`), `recentlyClosedMenu`, `sessionStore`, `commandPalette`, `linkHints`, `siteInfo` (a `SiteInfo`) and `siteSettingsManager` (`toggle()`, `visible`) they act on. |
+| `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar`, `window`, `userScriptManager`, `historyView` and `bookmarkManager` (anything with `toggle()` and `visible`, e.g. a `PanelOverlay`), `bookmarkStore`, `bookmarkButton` and `bookmarksBarTarget` / `bookmarksBarProperty` (the object and boolean property `bookmarks.showBar` toggles; default property `"visible"`), `recentlyClosedMenu`, `sessionStore`, `commandPalette`, `linkHints`, `siteInfo` (a `SiteInfo`), `siteSettingsManager` (`toggle()`, `visible`) and `devTools` (a `DevToolsPanel`) they act on. |
 | `KeyBindings` | Window-wide keyboard shortcuts for an `ActionRegistry` (`actions`): defaults from the actions, `bindings` overrides, conflict resolution, modes. See below. |
 | `UserScriptStore` | Installed userscripts and their GM values, persisted under `Cef.dataDir`, injected into attached views. See [Userscripts](#userscripts). |
 | `UserScriptManager` | Manager UI for a `UserScriptStore` (`store`), with `view` for "running on this page". See [Managing scripts](#managing-scripts). |
@@ -649,6 +655,7 @@ through `Style`, or copy one as the starting point for your own.
 | `BookmarkButton`, `BookmarksBar`, `BookmarkMenu`, `BookmarkEditor`, `BookmarkManager` | The star, the bookmarks bar, folder drop-downs, the edit card and the manager page. See [Bookmarks](#bookmarks). |
 | `SiteSettings`, `SiteSettingsModel` | Per-site permissions, zoom, JavaScript, images and pop-ups (C++, `CefQml`). See [`SiteSettings` and `SiteSettingsModel`](#sitesettings-and-sitesettingsmodel). |
 | `SiteInfo`, `SiteSettingsManager` | The site information card and the site settings page. See [Site settings](#site-settings). |
+| `DevToolsPanel` | Chromium's DevTools for the views of a layout: docked at the bottom or right of the page area (declared inside it) with a draggable splitter, as a tab next to the inspected one, or in a window of their own. See [DevTools](#devtools). |
 | `PanelOverlay` | Modal panel host: dims the window, centres its content, closes on a backdrop click or Escape. See [History page](#history-page). |
 | `WebTabs` | Non-visual tab manager: one `CefWebView` per tab, stacked, only the current one visible. `views`, `count`, `currentIndex`, `currentView`, `homeUrl`, `viewDelegate` (a `Component` deriving from `CefWebView`), `openPopupsInNewTabs`, `closeOnRequest`, `userScriptStore` (a `UserScriptStore` injected into every tab), `historyStore` (a `HistoryStore` recording every tab's visits), `siteSettings` (a `SiteSettings` enforced in every tab) and `zoomPolicy` (`"origin"`, the default: zoom is remembered per site; `"tab"`: every tab keeps its own zoom; see [Site settings](#site-settings)). `openTab(url, background, index, properties)` (`properties` are set on the new view, e.g. `{ discarded: true, title: "…" }`), `closeTab(index)`, `moveTab(from, to)`, `closeAll()`, `indexOf(view)`, `discard(index)` (frees a background tab's browser; it reloads when selected), `urls()`, `restore(entries, current, { lazy, append })` (entries are URLs or `{ url, title, icon, zoom, muted }`; `lazy` opens background tabs discarded; returns the new views). The current tab is never discarded. Signals `tabOpened`, `tabClosed(view, index)`, `lastTabClosed`, `sessionChanged`, `contextMenuRequested(view, ...)`; set `interceptJavaScriptDialogs` / `interceptPermissions` / `interceptFileDialogs` / `interceptDownloads` to receive every tab's requests as `javaScriptDialogRequested(view, dialog)`, `permissionRequested(view, request)`, `fileDialogRequested(view, request)`, `downloadRequested(view, download)`. |
 | `TabStrip` | Horizontal tab bar for a `WebTabs` (`tabs`, required): click selects, middle click or × closes, + emits `newTabRequested()`, right click emits `contextMenuRequested(index, x, y)` (strip coordinates). Discarded tabs are dimmed. `maxTabWidth`, `minTabWidth`. |
@@ -661,7 +668,7 @@ through `Style`, or copy one as the starting point for your own.
 | `LinkHints` | Keyboard link hints (as in Vimium or qutebrowser) for a `view`: labels the clickable elements in view, typing a label clicks, opens, copies, focuses or hovers one. See [Link hints and keyboard browsing](#link-hints-and-keyboard-browsing). |
 | `FindBar` | Find-in-page bar for `view`: Enter next, Shift+Enter previous, Escape closes. `text`, `matchCount`, `activeMatch`, `matchCase`, `open()`, `close()`, `findNext(forward)`, signal `closeRequested()`. |
 | `RequestOverlay` | Shows JavaScript dialogs and permission prompts of a `WebTabs` (`tabs`, required) as an in-page card; requests of background tabs wait until their tab is shown. Permission cards have a "Remember this decision" checkbox (`remember`, initially `rememberByDefault`, default true): the decision is stored per permission for the origin in `tabs.siteSettings`, or without one in `decisions` for this session. `rememberPermissions: false` hides it. `accept()`, `reject()`, `dismiss()` (Escape: closes a permission card without deciding). |
-| `ContextMenu` | Right-click menu for a `WebTabs` (`tabs`, required), drawn inside the window: open/copy link, undo/redo/cut/copy/paste/select all in editable fields, copy selection, otherwise back/forward/reload. Signal `openLinkInNewTab(url)`; `show(view, x, y, linkUrl, selectedText, editable)`, `close()`. |
+| `ContextMenu` | Right-click menu for a `WebTabs` (`tabs`, required), drawn inside the window: open/copy link, undo/redo/cut/copy/paste/select all in editable fields, copy selection, otherwise back/forward/reload; with `actions` (an `ActionRegistry` that has an enabled `devtools.inspect`), "Inspect" for the clicked point. Signal `openLinkInNewTab(url)`; `show(view, x, y, linkUrl, selectedText, editable)`, `close()`. |
 | `DownloadsBar` | Strip listing `Cef.downloads` with progress; click opens a finished file, ■ cancels, × and "Clear" remove finished entries. Hidden when empty. |
 | `StatusBubble` | Bottom-left bubble showing `view.hoveredUrl`. |
 | `IconButton` | Small flat button showing a text glyph: `text`, `toolTip`, `enabled`, `checked`, `textColor`, signal `clicked()`. |
@@ -1407,6 +1414,8 @@ and the same pieces work in a layout of your own.
 | `page.scrollDown`, `page.scrollUp`, `page.scrollLeft`, `page.scrollRight` | | scrolls `controller.scrollStep` CSS px (`{ amount }`, `{ smooth }`) |
 | `page.scrollPageDown`, `page.scrollPageUp` | | scrolls 0.9 of the visible height (`{ pages }`) |
 | `page.scrollTop`, `page.scrollBottom` | | |
+| `devtools.toggle` | F12, Ctrl+Shift+I | opens / closes the DevTools of the current tab (`{ view }`: of that view; on a DevTools tab: closes it); `checked` while open; needs `devTools` |
+| `devtools.inspect` | | `{ view, x, y }`: opens DevTools and reveals the element at (x, y) (view coordinates); the context menu's "Inspect" |
 
 Every action has a human-readable `text`, and `enabled` follows the state
 (e.g. `nav.back` only with history). Disabled actions do not run, and their
@@ -1521,6 +1530,7 @@ browser.navigate("https://example.org/slow", { tab: 2, timeout: 10000 })
 | `discardTab(tab)` | Free a background tab's browser (`WebTabs.discard()`). |
 | `scrollPage(how, opts, tab)` | Scrolls the page without focusing it: `how` is `"up"`, `"down"`, `"left"`, `"right"` (`scrollStep` CSS px, default 60, or `opts.amount`), `"pageUp"`, `"pageDown"` (`opts.pages` of the visible size, default 0.9), `"top"` or `"bottom"`; `opts.smooth` animates. It moves the scrollable element around the focused element or the middle of the page, else the document. Returns a Promise of `{ ok, moved, element, x, y }`. |
 | `focusInput(opts, tab)` | Focuses the view and a text field of its page: the first visible one, `opts.next` / `opts.previous` (relative to the focused one), or `opts.index`; `opts.select` selects its text. Promise of `{ ok, count, index }`. |
+| `showDevTools(tab)`, `closeDevTools(tab)`, `toggleDevTools(tab)`, `hasDevTools(tab)`, `inspectElement(x, y, tab)` | DevTools of a tab through `devTools` (a `DevToolsPanel`; `Browser` sets it). `showDevTools` returns the frontend view; for a DevTools tab they act on the tab it inspects. `closeDevTools` also works without `devTools`. |
 | `currentView`, `count`, `currentIndex`, `searchUrl`, `zoomStep`, `scrollStep`, `isInternalUrl`, `urlFor(text)` | |
 
 ```qml
@@ -1676,6 +1686,60 @@ Window {
 }
 ```
 
+## DevTools
+
+Chromium's DevTools inspector runs inside the scene as an ordinary
+off-screen `CefWebView`: set its `devToolsFor` to the view to inspect.
+
+```qml
+CefWebView { id: page; anchors.fill: parent; url: "https://example.com" }
+CefWebView {
+    id: inspector
+    devToolsFor: page                     // Chromium's DevTools for `page`
+    onCloseRequested: destroy()           // closeDevTools(), page closed, ...
+}
+// page.inspectElementAt(x, y)            // reveal an element in Elements
+// page.closeDevTools()                   // the page keeps running
+```
+
+`DevToolsPanel` (in `CefQml.Components`) does the layout: the page area
+goes inside it, and it docks a frontend at the bottom or right with a
+draggable splitter, opens it as a tab after the inspected one (`tabs`), or
+in a `Window` of its own (`dock`: `"bottom"`, `"right"`, `"tab"`,
+`"window"`; changing it moves open DevTools). Each view gets its own
+frontend; the docked one follows `view`, so switching tabs switches
+DevTools too.
+
+| `DevToolsPanel` | |
+|---|---|
+| `view`, `tabs`, `dock` | The view whose docked DevTools are shown (usually the current tab), the `WebTabs` for `"tab"` (without it, `"tab"` docks at the bottom), and where DevTools open. |
+| `size`, `minimumSize`, `minimumPageSize`, `dockSize` | Docked height or width (the splitter changes it; default 320), the minimums both sides keep, and the extent in use (0 when nothing is docked). |
+| `windowSize`, `showHeader`, `frontendDelegate` | Size of a new DevTools window; the docked header (dock bottom / right / undock / close buttons); the `Component` each frontend is made from (a `CefWebView`). |
+| `frontend`, `docked`, `entries`, `pageItem`, `dockItem` | The docked frontend of `view`; whether there is one; `[{ view, frontend, kind, window }]` for every open DevTools; the page and docked areas. |
+| `show(view)`, `close(view)`, `toggle(view)`, `isOpen(view)`, `frontendFor(view)`, `inspect(x, y, view)`, `closeAll()` | `view` defaults to `view`; for a frontend view they act on what it inspects. `show` returns (and focuses) the frontend. |
+| `opened(view, frontend)`, `closed(view)`, `openUrlRequested(url)` | Signals; the last one for links DevTools open in a new tab or window. |
+
+`Browser` wraps its tabs in one (`devToolsPanel`, placement from
+`devTools`) and has the actions `devtools.toggle` (F12, Ctrl+Shift+I;
+rebind them through `bindings` like any action) and `devtools.inspect`
+(the context menu's "Inspect"). DevTools tabs are not saved in the session
+or the recently closed tabs. Closing the inspected tab (or discarding it)
+closes its DevTools; closing DevTools leaves the page as it was.
+
+**How it connects.** CEF's `ShowDevTools()` cannot be used: even with
+windowless window info it opens a native, Chrome-style top-level window
+(CEF 154 logs "Windowless rendering is not supported for this DevTools
+window"), which off-screen rendering under the headless Ozone platform does
+not have. Pointing the bundled frontend at a remote-debugging port would
+work, but needs the port (`CEF_QML_REMOTE_DEBUGGING_PORT`) open to every
+local process for every app. Instead the frontend
+(`devtools://devtools/bundled/devtools_app.html`) is loaded in an ordinary
+off-screen browser and its WebSocket is replaced, before its scripts run,
+by a bridge to the inspected browser's in-process DevTools protocol
+session (the one `devToolsMethod()` uses, attached to the page target with
+a session of its own): no window, no port, and frontend and page can be
+reloaded, discarded or closed independently.
+
 ## Remote control (Chrome DevTools Protocol)
 
 Set `CEF_QML_REMOTE_DEBUGGING_PORT` to expose Chromium's remote-debugging
@@ -1692,7 +1756,8 @@ WebSocket as in `tests/cdp_remote.py`) to a target's `webSocketDebuggerUrl` and
 use `Page.navigate`, `Runtime.evaluate`, ...; the QML side reflects the
 changes as usual. Anyone on the machine can connect, so only enable it for
 development or automation. Inside QML, `CefWebView.devToolsMethod()` gives the
-same protocol without a port.
+same protocol without a port, and [DevTools](#devtools) show the inspector
+without one.
 
 ## Environment variables
 
@@ -1737,6 +1802,10 @@ Qt logging: the plugin logs under the category `cefqml`
   only; `GM_xmlhttpRequest` uses Qt's network stack without Chromium's
   cookies; no `@resource`, menu commands, notifications, value-change
   listeners or automatic updates.
+- **DevTools** inspect the page target of one view; there is no
+  remote-target discovery (`chrome://inspect`), and `DevToolsPanel` and the
+  `devtools.*` actions treat a DevTools view as the page it inspects (no
+  DevTools for DevTools).
 - **Link hints, `focusInput` and `scrollPage`** reach the main frame and its
   same-origin iframes, not cross-origin ones (out-of-process iframes) or
   closed shadow roots.
