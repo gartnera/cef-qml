@@ -37,6 +37,9 @@ FocusScope {
     property alias keyBindings: keys
     // User key bindings, { actionName: [sequences] } (see KeyBindings).
     property alias bindings: keys.bindings
+    // Userscripts injected into every tab (UserScriptStore, persisted under
+    // Cef.dataDir/userscripts). Set to null to disable them.
+    property QtObject userScriptStore: UserScriptStore { }
 
     signal lastTabClosed()
 
@@ -153,6 +156,7 @@ FocusScope {
             id: webTabs
             anchors.fill: parent
             homeUrl: browser.homeUrl
+            userScriptStore: browser.userScriptStore
             onLastTabClosed: browser.keepOneTab ? browser.newTab() : browser.lastTabClosed()
             onCurrentViewChanged: if (currentView && browser.activeFocus && !navBar.addressField.input.activeFocus)
                                       currentView.forceActiveFocus()

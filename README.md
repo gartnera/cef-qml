@@ -417,13 +417,14 @@ through `Style`, or copy one as the starting point for your own.
 
 | Component | Purpose and key API |
 |---|---|
-| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings). Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
+| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts). Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
 | `BrowserController` | Non-visual programmatic API over a `WebTabs` (`tabs`): navigation that reports its result, tab helpers, zoom, recently closed tabs. See below. |
 | `BrowserAction` | A named command: `name` (`"tab.new"`), `text`, `description`, `category`, `enabled`, `checkable`/`checked`, `defaultShortcuts`, signal `triggered(args)`, `trigger(args)`. |
 | `ActionRegistry` | A set of `BrowserAction`s looked up and run by name: `model` (for menus or a command palette), `count`, `action(name)`, `has(name)`, `names()`, `trigger(name, args)`, `add(action or { name, text, defaultShortcuts, onTriggered })`, `remove(nameOrAction)`, signal `actionTriggered(name, args)`. |
 | `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar` and `window` they act on. |
 | `KeyBindings` | Window-wide keyboard shortcuts for an `ActionRegistry` (`actions`): defaults from the actions, `bindings` overrides, conflict resolution, modes. See below. |
-| `WebTabs` | Non-visual tab manager: one `CefWebView` per tab, stacked, only the current one visible. `views`, `count`, `currentIndex`, `currentView`, `homeUrl`, `viewDelegate` (a `Component` deriving from `CefWebView`), `openPopupsInNewTabs`, `closeOnRequest`. `openTab(url, background, index)`, `closeTab(index)`, `moveTab(from, to)`, `closeAll()`, `indexOf(view)`, `urls()` / `restore(urls, current)` for sessions. Signals `tabOpened`, `tabClosed(view, index)`, `lastTabClosed`, `sessionChanged`, `contextMenuRequested(view, ...)`; set `interceptJavaScriptDialogs` / `interceptPermissions` / `interceptFileDialogs` / `interceptDownloads` to receive every tab's requests as `javaScriptDialogRequested(view, dialog)`, `permissionRequested(view, request)`, `fileDialogRequested(view, request)`, `downloadRequested(view, download)`. |
+| `UserScriptStore` | Installed userscripts and their GM values, persisted under `Cef.dataDir`, injected into attached views. See [Userscripts](#userscripts). |
+| `WebTabs` | Non-visual tab manager: one `CefWebView` per tab, stacked, only the current one visible. `views`, `count`, `currentIndex`, `currentView`, `homeUrl`, `viewDelegate` (a `Component` deriving from `CefWebView`), `openPopupsInNewTabs`, `closeOnRequest`, `userScriptStore` (a `UserScriptStore` injected into every tab). `openTab(url, background, index)`, `closeTab(index)`, `moveTab(from, to)`, `closeAll()`, `indexOf(view)`, `urls()` / `restore(urls, current)` for sessions. Signals `tabOpened`, `tabClosed(view, index)`, `lastTabClosed`, `sessionChanged`, `contextMenuRequested(view, ...)`; set `interceptJavaScriptDialogs` / `interceptPermissions` / `interceptFileDialogs` / `interceptDownloads` to receive every tab's requests as `javaScriptDialogRequested(view, dialog)`, `permissionRequested(view, request)`, `fileDialogRequested(view, request)`, `downloadRequested(view, download)`. |
 | `TabStrip` | Horizontal tab bar for a `WebTabs` (`tabs`, required): click selects, middle click or × closes, + emits `newTabRequested()`. `maxTabWidth`, `minTabWidth`. |
 | `NavigationBar` | Back / forward / reload-stop, an `AddressField` and a load-progress line for `view`. `addressField`, `searchUrl`; children are placed after the address field (e.g. a menu button). |
 | `AddressField` | URL/search field bound to `view`: shows the page URL while not edited; Enter navigates, non-addresses are searched with `searchUrl` (`%s` = query). `text`, `input`, `isInternalUrl` (urls shown as an empty field), `urlFor(text)`, `focusAndSelect()`, signal `navigated(url)`. |
@@ -437,6 +438,126 @@ through `Style`, or copy one as the starting point for your own.
 
 `Browser` answers file dialogs with Qt's `FileDialog` when the
 `QtQuick.Dialogs` module is installed (it is optional).
+
+### Userscripts
+
+Greasemonkey / Tampermonkey / Violentmonkey-style userscripts, injected
+natively (through the DevTools protocol, no extension needed).
+`UserScriptStore` keeps the scripts and their values; attach it to views:
+
+```qml
+UserScriptStore { id: userScripts }                 // files under Cef.dataDir/userscripts/
+WebTabs { userScriptStore: userScripts }            // every tab, from its first page on
+CefWebView { id: web; Component.onCompleted: userScripts.attach(web) }   // or single views
+...
+userScripts.install(sourceText)                     // { ok, script, updated, error, warnings }
+userScripts.installFromUrl("https://example.com/x.user.js", result => ...)
+```
+
+`Browser` has one (`userScriptStore`).
+
+| `UserScriptStore` member | Description |
+|---|---|
+| `directory` | Where `scripts.json` and `values.json` live: relative to `Cef.dataDir` (default `"userscripts"`) or absolute. |
+| `scripts`, `count`, `loaded` | Installed scripts in run order (reassigned on every change; usable as a view model). Each is `{ id, name, namespace, version, description, author, icon, homepage, enabled, source, url, installDate, updateDate, meta, grants, world, runAt, noframes, matchSummary, warnings, requires, pending, error }`. |
+| `install(source, { url, enabled })` | Install, or update the script with the same `@namespace` + `@name` (keeping its id, enabled state and values). `url` is the base for relative `@require`s. Returns `{ ok, script, updated, error, warnings }`. |
+| `installFromUrl(url, callback(result))` | Fetch (`http(s):`, `file:`, `data:`) and install. |
+| `update(id, source)`, `remove(id)`, `setEnabled(id, enabled)`, `move(from, to)`, `script(id)` | |
+| `scriptsFor(url, includeDisabled)` | Scripts whose rules match a top-level `url`. |
+| `values(id)`, `setValue(id, key, value)`, `deleteValue(id, key)`, `clearValues(id)` | A script's GM storage (JSON values). |
+| `attach(view)`, `detach(view)`, `isAttached(view)` | Inject into a `CefWebView`. A view attached before its browser exists gets the scripts on its first page; otherwise from its next document on. |
+| `runningScripts(view)` | Ids of the scripts that run in the view's current top-level document, as reported by the page. |
+| `save()`, `reload()` | Write now / re-read both files (also saved automatically). |
+| `parseMetadata(source)`, `matches(patternOrMeta, url)` | The parser and URL rules, for tools and tests. |
+| signals `installed(script, updated)`, `removed(id)`, `valuesChanged(id)`, `runningChanged(view)` | |
+
+Every change (install, update, enable/disable, remove, values) applies to
+documents that start afterwards, in every attached view and tab; pages that
+are already open keep what they started with (reload them).
+
+**Metadata.** `@name` (required), `@namespace`, `@version`, `@description`,
+`@author`, `@icon`, `@homepage`, `@downloadURL`/`@updateURL` (stored only:
+there is no automatic updating), `@match`, `@include`, `@exclude`,
+`@exclude-match`, `@run-at`, `@grant`, `@noframes`, `@require`,
+`@inject-into`. Unknown keys are kept in `meta.other`.
+
+- `@match` / `@exclude-match`: Chrome match patterns, `scheme://host/path` with
+  `*` (`*` scheme = http and https), `*.` host prefixes, any port unless the
+  pattern names one, and `<all_urls>`.
+- `@include` / `@exclude`: globs (`*` = anything, case-insensitive) or
+  `/regular expressions/flags`. No `@match` and no `@include`: every page.
+- Scripts only run on `http(s):`, `file:`, `ftp:` and `data:` documents
+  (never `about:`, `chrome:`, ...).
+- `@run-at`: `document-start` (before any page script; `document.documentElement`
+  may not exist yet), `document-body` (once `<body>` exists), `document-end`
+  (default; at `DOMContentLoaded`, before the page's own listeners) or
+  `document-idle` (just after `DOMContentLoaded`). Scripts with the same
+  `@run-at` run in list order.
+- `@noframes`: top-level documents only; otherwise scripts also run in
+  subframes rendered by the same process (see limitations).
+- `@require`: fetched once at install time (relative URLs against the
+  script's URL) and run before the script, in the same scope. A script runs
+  once all its requires arrived (`pending`), and not at all if one failed
+  (`error`).
+
+**APIs.** `GM_info` and `GM_log` are always there; the others need a `@grant`
+(either `GM_x` or `GM.x` grants both forms). `@grant none` grants nothing;
+a script without any `@grant` gets the APIs its source mentions.
+
+| API | Notes |
+|---|---|
+| `GM_getValue`, `GM_setValue`, `GM_deleteValue`, `GM_listValues` (+ `GM.*` promise forms) | JSON values, per script. Reads are synchronous from a copy seeded into the page; writes update it at once and are sent to the host, which persists them (`values.json`) and seeds later documents of every view. Two tabs open at the same time do not see each other's writes until their next navigation (no `GM_addValueChangeListener`). |
+| `GM_addStyle(css)` / `GM.addStyle` | Adds a `<style>` (as soon as there is a root element); returns it. |
+| `GM_openInTab(url, background)` / `GM.openInTab` | Emits the view's `newWindowRequested(url, true, background)` (`WebTabs` opens a tab). Options `{ active: false }` / `{ loadInBackground: true }` mean background; the default is foreground. The returned handle's `close()` does nothing. |
+| `GM_setClipboard(text)` / `GM.setClipboard` | `Cef.copyToClipboard`. |
+| `GM_xmlhttpRequest(details)` / `GM.xmlHttpRequest` | Content-world scripts only; `http(s)` only. Done by Qt's network stack (no cross-origin restrictions, **no Chromium cookies**), text responses (`responseType: "json"` parsed); `method`, `url`, `headers`, `data`, `timeout`, `context`, `onload`/`onerror`/`ontimeout`/`onabort`/`onloadend`/`onreadystatechange` (final state only), `abort()`. `@connect` is not enforced. |
+| `GM_info` | `{ script: { name, namespace, version, description, author, matches, includes, excludes, grant, runAt, ... }, scriptMetaStr, scriptHandler: "CefQml", version, injectInto }`. |
+| `unsafeWindow` | The page's `window` in the page world; in the content world, the isolated world's `window` (DOM only, no page globals). |
+
+Not supported: `GM_notification`, `GM_getResourceText`/`GM_getResourceURL`
+(`@resource`), `GM_addValueChangeListener`, `GM_registerMenuCommand`,
+`GM_download`, `GM_cookie`, `window.onurlchange`, automatic updates.
+
+**Isolation.** Each script runs in one of two JavaScript worlds, chosen by
+`@inject-into` (`page`, `content` or `auto`, the default):
+
+- *page*: the page's own world. The script sees the page's variables and
+  vice versa, like a `<script>` tag. `auto` picks it for scripts that need no
+  privileged API (`@grant none`, only `GM_info`/`GM_log`) and for scripts
+  that ask for `unsafeWindow`.
+- *content*: an isolated world, like an extension content script: same DOM,
+  separate JavaScript globals. `auto` picks it for every script with a
+  privileged grant, so that the page cannot reach its storage, its clipboard
+  and tab access or `GM_xmlhttpRequest`.
+
+The host only accepts GM messages for scripts of the world they come from and
+within their grants; a page can therefore at most act as its own page-world
+scripts (which share its world anyway). Each world's channel is a DevTools
+binding that is removed, together with the hidden queue the scripts are
+loaded through, before any page script runs.
+
+**How it works.** For each attached view the store calls
+`Runtime.enable` and `Runtime.addBinding` (one binding per world), then
+registers, with `Page.addScriptToEvaluateOnNewDocument`, one entry per
+enabled script (wrapped in a function, so a syntax error only breaks that
+script) and one runtime per world, which runs last: it takes the bindings
+and the queued scripts, checks `@match`/`@include`/`@exclude`/`@noframes`
+against the document and runs the scripts at their `@run-at` with their GM
+API and seeded values. Chromium runs these entries in every new document of
+the view, main frame and same-process subframes, before the page's own
+scripts and regardless of its Content Security Policy. Registrations made
+before the browser exists are queued and land before the view's first page
+(the view starts on an internal `about:blank` until its DevTools setup is
+done). Changing the scripts re-registers them; changing values only replaces
+the runtimes.
+
+**Limitations.** Cross-site iframes that Chromium puts in another renderer
+process (site isolation) do not get scripts (the DevTools session only
+covers the view's main target; `--disable-site-isolation-trials` in
+`CEF_QML_FLAGS` should keep them in-process, untested). `about:blank` and `srcdoc` frames never run scripts.
+Values are seeded into every matching document, so keep them small. A page's
+CSP may block `GM_addStyle` styles. Two `UserScriptStore`s on the same
+directory (or two processes) overwrite each other's files.
 
 ### Actions, key bindings and scripting
 

@@ -23,6 +23,17 @@ Item {
     property bool openPopupsInNewTabs: true
     // Close the tab when the page calls window.close().
     property bool closeOnRequest: true
+    // Userscripts injected into every tab (a UserScriptStore), or null.
+    // Tabs opened afterwards get them before their first page; tabs that
+    // are already open from their next document on.
+    property var userScriptStore: null
+    property var _attachedStore: null
+    onUserScriptStoreChanged: {
+        if (_attachedStore) for (const v of views) _attachedStore.detach(v)
+        _attachedStore = userScriptStore
+        if (userScriptStore) for (const v of views) userScriptStore.attach(v)
+    }
+    Component.onCompleted: _attachedStore = userScriptStore
 
     // When enabled, the matching request of every tab is forwarded through
     // the signals below instead of CEF's default handling.
@@ -125,6 +136,8 @@ Item {
     }
 
     function _wire(view) {
+        _attachedStore = userScriptStore
+        if (userScriptStore) userScriptStore.attach(view)
         view.urlChanged.connect(tabs.sessionChanged)
         view.newWindowRequested.connect((url, userGesture, background) => {
             if (tabs.openPopupsInNewTabs)

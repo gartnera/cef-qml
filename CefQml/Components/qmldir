@@ -16,4 +16,5 @@ ActionRegistry 1.0 ActionRegistry.qml
 KeyBindings 1.0 KeyBindings.qml
 BrowserController 1.0 BrowserController.qml
 BrowserActions 1.0 BrowserActions.qml
+UserScriptStore 1.0 UserScriptStore.qml
 Browser 1.0 Browser.qml
