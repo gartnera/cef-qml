@@ -12,7 +12,8 @@ import CefQml
 // address.focus needs `addressField` (anything with focusAndSelect()),
 // page.find* need `findBar` (open(), findNext(forward), visible, text),
 // window.fullscreen needs `window`, userscripts.manage needs
-// `userScriptManager` (toggle(), visible). Declare more BrowserActions inside, or
+// `userScriptManager` and history.show `historyView` (both: toggle(),
+// visible; e.g. a PanelOverlay). Declare more BrowserActions inside, or
 // replace one by adding an action with the same name.
 ActionRegistry {
     id: acts
@@ -22,6 +23,7 @@ ActionRegistry {
     property var findBar: null
     property var window: null
     property var userScriptManager: null
+    property var historyView: null
 
     readonly property CefWebView view: controller ? controller.currentView : null
     readonly property bool hasView: view !== null
@@ -202,6 +204,16 @@ ActionRegistry {
         checked: acts.userScriptManager !== null && acts.userScriptManager.visible
         enabled: acts.userScriptManager !== null
         onTriggered: acts.userScriptManager.toggle()
+    }
+
+    // history.*
+    BrowserAction {
+        name: "history.show"; text: "History"
+        description: "Show or hide the browsing history."
+        defaultShortcuts: ["Ctrl+H"]
+        checked: acts.historyView !== null && acts.historyView.visible
+        enabled: acts.historyView !== null
+        onTriggered: acts.historyView.toggle()
     }
 
     function _findStep(forward) {

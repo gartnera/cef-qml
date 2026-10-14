@@ -477,14 +477,16 @@ through `Style`, or copy one as the starting point for your own.
 
 | Component | Purpose and key API |
 |---|---|
-| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts), `userScriptManager` (the `UserScriptManager` overlay), `userScriptManagerVisible`, `offerUserScriptInstall` (default true), `historyStore` (a `HistoryStore` on `history.json`; null disables history), `addressSuggestions` (the address bar's `AddressSuggestions`). Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`, `showUserScripts()`, `hideUserScripts()`, `reviewUserScript(url)`, `isUserScriptUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
+| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts), `userScriptManager` (the `UserScriptManager` overlay), `userScriptManagerVisible`, `offerUserScriptInstall` (default true), `historyStore` (a `HistoryStore` on `history.json`; null disables history), `addressSuggestions` (the address bar's `AddressSuggestions`), `historyView` (the `HistoryView` overlay), `historyVisible`. Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`, `showUserScripts()`, `hideUserScripts()`, `showHistory()`, `hideHistory()`, `reviewUserScript(url)`, `isUserScriptUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
 | `BrowserController` | Non-visual programmatic API over a `WebTabs` (`tabs`): navigation that reports its result, tab helpers, zoom, recently closed tabs. See below. |
 | `BrowserAction` | A named command: `name` (`"tab.new"`), `text`, `description`, `category`, `enabled`, `checkable`/`checked`, `defaultShortcuts`, signal `triggered(args)`, `trigger(args)`. |
 | `ActionRegistry` | A set of `BrowserAction`s looked up and run by name: `model` (for menus or a command palette), `count`, `action(name)`, `has(name)`, `names()`, `trigger(name, args)`, `add(action or { name, text, defaultShortcuts, onTriggered })`, `remove(nameOrAction)`, signal `actionTriggered(name, args)`. |
-| `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar`, `window` and `userScriptManager` they act on. |
+| `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar`, `window`, `userScriptManager` and `historyView` (anything with `toggle()` and `visible`, e.g. a `PanelOverlay`) they act on. |
 | `KeyBindings` | Window-wide keyboard shortcuts for an `ActionRegistry` (`actions`): defaults from the actions, `bindings` overrides, conflict resolution, modes. See below. |
 | `UserScriptStore` | Installed userscripts and their GM values, persisted under `Cef.dataDir`, injected into attached views. See [Userscripts](#userscripts). |
 | `UserScriptManager` | Manager UI for a `UserScriptStore` (`store`), with `view` for "running on this page". See [Managing scripts](#managing-scripts). |
+| `HistoryView` | Searchable history page for a `HistoryStore` (`store`), grouped by day. See [History page](#history-page). |
+| `PanelOverlay` | Modal panel host: dims the window, centres its content, closes on a backdrop click or Escape. See [History page](#history-page). |
 | `WebTabs` | Non-visual tab manager: one `CefWebView` per tab, stacked, only the current one visible. `views`, `count`, `currentIndex`, `currentView`, `homeUrl`, `viewDelegate` (a `Component` deriving from `CefWebView`), `openPopupsInNewTabs`, `closeOnRequest`, `userScriptStore` (a `UserScriptStore` injected into every tab), `historyStore` (a `HistoryStore` recording every tab's visits). `openTab(url, background, index)`, `closeTab(index)`, `moveTab(from, to)`, `closeAll()`, `indexOf(view)`, `urls()` / `restore(urls, current)` for sessions. Signals `tabOpened`, `tabClosed(view, index)`, `lastTabClosed`, `sessionChanged`, `contextMenuRequested(view, ...)`; set `interceptJavaScriptDialogs` / `interceptPermissions` / `interceptFileDialogs` / `interceptDownloads` to receive every tab's requests as `javaScriptDialogRequested(view, dialog)`, `permissionRequested(view, request)`, `fileDialogRequested(view, request)`, `downloadRequested(view, download)`. |
 | `TabStrip` | Horizontal tab bar for a `WebTabs` (`tabs`, required): click selects, middle click or × closes, + emits `newTabRequested()`. `maxTabWidth`, `minTabWidth`. |
 | `NavigationBar` | Back / forward / reload-stop, an `AddressField` and a load-progress line for `view`. `addressField`, `searchUrl`; children are placed after the address field (e.g. a menu button). |
@@ -562,6 +564,61 @@ Browser {
 The popup is placed under the field inside the suggestions' `parent`: put
 `AddressSuggestions` in an item that covers the page area (e.g. the window's
 content item), declared after the web views so it stacks above them.
+
+### History page
+
+`HistoryView` lists a `HistoryStore` newest first under day headings (Today,
+Yesterday, then dates) with a search field (every word must occur in the URL
+or title). Click an entry to open it, Ctrl/Shift+click or middle-click to open
+it in a new tab; × removes one entry, and "Clear history…" removes the last
+hour, today or everything. In the search field Up/Down/PgUp/PgDown select,
+Enter opens (Ctrl/Shift+Enter: new tab), Shift+Delete removes the selected
+entry, and Escape cancels "Clear history…", then clears the search, then
+closes. `Browser` shows it as an overlay with the `history.show` action
+(Ctrl+H) or `showHistory()`; a plain click opens the entry in the current
+tab and closes the overlay, a new-tab click opens a background tab and keeps
+it open.
+
+```qml
+// A history page of your own: in a PanelOverlay, or anchored anywhere.
+PanelOverlay {
+    id: historyOverlay
+    anchors.fill: parent
+    returnFocusTo: tabs.currentView
+    HistoryView {
+        anchors.fill: parent
+        store: history
+        onOpenRequested: (url, newTab) => {
+            if (newTab) tabs.openTab(url, true)
+            else { historyOverlay.close(); tabs.currentView.url = url }
+        }
+        onCloseRequested: historyOverlay.close()
+    }
+}
+Shortcut { sequence: "Ctrl+H"; onActivated: historyOverlay.toggle() }
+```
+
+| `HistoryView` member | Description |
+|---|---|
+| `store` | The `HistoryStore`. |
+| `filterText`, `count`, `model` | Search text; rows shown; the `HistoryModel` behind the list. |
+| `currentIndex` | Selected row (-1: none; typing selects the first match). |
+| `title`, `closable` | Heading (default "History"); show the × button. |
+| `clearing`, `status` | Read-only: the "Clear history…" choices are shown; last status message. |
+| `open(row, newTab)`, `remove(row)` | Emit `openRequested` for / remove a row (default: the selected one). |
+| `clearHistory(range)` | `"hour"`, `"today"`, `"all"` or a start time (ms or `Date`); returns the number removed. `askClear(show)` shows the choices. |
+| `entryAt(row)`, `rowAt(row)`, `dayLabel(day)` | The entry object, the row's delegate, a section label. |
+| `focusDefault()` | Focuses the search field. |
+| signals `openRequested(url, newTab)`, `closeRequested()` | |
+
+`PanelOverlay` is the host `Browser` uses for the history page and the
+userscript manager (opening one closes the other): its children fill a
+centred panel (`panelWidth` x `panelHeight`, default 820 x 600, shrunk to
+fit; `topMargin`, `sideMargin`) over a `backdropColor` backdrop.
+`open()` focuses the content (its `focusDefault()` when it has one),
+`close()` gives focus to `returnFocusTo`, `toggle()`; `available: false`
+keeps it closed; `closeOnBackdropClick`, `closeOnEscape` (Escape the content
+does not handle); `contentItem`, `panelItem`; signals `opened()`, `closed()`.
 
 ### Userscripts
 
@@ -741,6 +798,7 @@ and the same pieces work in a layout of your own.
 | `edit.undo`, `edit.redo`, `edit.cut`, `edit.copy`, `edit.paste`, `edit.selectAll`, `page.copyUrl` | | |
 | `window.fullscreen` | F11 | `checked` reflects the window state |
 | `userscripts.manage` | Ctrl+Shift+U | shows / hides the userscript manager; `checked` while shown |
+| `history.show` | Ctrl+H | shows / hides the history page; `checked` while shown |
 
 Every action has a human-readable `text`, and `enabled` follows the state
 (e.g. `nav.back` only with history). Disabled actions do not run, and their

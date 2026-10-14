@@ -16,6 +16,10 @@ Notes for contributors (human or agent). Read this before changing anything.
   - `hotreload.*` — `HotReload` item (live QML reloading).
   - `jsonstore.*` — `JsonStore` (persisted JSON documents under
     `Cef.dataDir`; the storage of userscripts and future app state).
+  - `historystore.*` — `HistoryStore` (browsing history: in-memory hash +
+    newest-first list, frecency search, JSON file), its per-view
+    `HistoryTracker` (what counts as a visit) and `HistoryModel` (filter
+    proxy for history pages).
   - `plugin.*` — type registration and the `Cef` singleton.
 - `CefQml/Components/` — pure-QML module `CefQml.Components`: reusable browser
   building blocks (`WebTabs`, `TabStrip`, `NavigationBar`, `AddressField`,
@@ -25,6 +29,9 @@ Notes for contributors (human or agent). Read this before changing anything.
   (metadata parser, URL rules, and the in-page runtime as a string),
   `UserScriptStore.qml` (persistence, DevTools registration per view, the
   page -> host message handler) and `UserScriptManager.qml` (UI).
+  History UI: `AddressSuggestions.qml` (omnibox drop-down, inline
+  completion, providers), `HistoryView.qml` (history page) and
+  `PanelOverlay.qml` (the modal panel host `Browser` uses for its managers).
 - `examples/browser/` — the reference application (`main.qml`, `dev.qml` for
   live reload, `BrowserApp.qml`).
 - `tests/` — `qmltestrunner` suites, run by `tests/run.sh` (via `meson test`),
@@ -202,6 +209,36 @@ signal kills the process the default way.
     never answers, `loading` stays true): use `data:` iframes.
   - Out-of-process iframes are separate DevTools targets; the view's session
     does not cover them, so they get no scripts.
+- History / address bar:
+  - What counts as a visit lives in `HistoryTracker` (historystore.cpp): a
+    visit starts at `loadStarted` (document commit) and is recorded at
+    `loadFinished` unless `loadFailed` fired (ERR_ABORTED, -3, is ignored);
+    same-URL loads only refresh the time; `Page.navigatedWithinDocument`
+    with a new path (pushState) is a visit, a fragment change is not. Only a
+    title seen *after* `loadStarted` is used: `view.title` still holds the
+    previous page's title at commit, so a page without `<title>` would
+    inherit it.
+  - Every `tst_*.qml` file runs in one process with one profile, so all
+    `Browser`s share `Cef.dataDir/history.json`; tests `clear()` the store
+    first instead of assuming it is empty.
+  - `tryCompare(store.entry(url), ...)` never updates: `entry()` returns a
+    snapshot. Use `tryVerify(() => store.entry(url).visitCount === 2)`.
+  - Repeater delegates that were replaced (the suggestion list is rebuilt
+    on every keystroke) linger until deferred deletion, so `findChild(..,
+    "suggestion0")` can return a stale row; use `rowAt(i)`
+    (`AddressSuggestions`, `HistoryView`). Positioners (`Column`) lay out
+    late, so the rows are placed by index instead.
+  - A hover-enter is delivered to rows that appear under a stationary mouse
+    pointer; selecting on that would move the keyboard selection while
+    typing. `AddressSuggestions` only follows real mouse movement, and the
+    tests park the pointer in a corner.
+  - `AddressField` handles keys in a single `Keys.onPressed` that asks
+    `suggestions.handleKey()` first: specific handlers such as
+    `Keys.onEscapePressed` run before `onPressed`, which would let the field
+    act on Escape before the popup could close.
+  - Inline completion must not re-complete after Backspace/Delete (the user
+    is removing the completion); `AddressSuggestions` checks the key before
+    `textEdited` is processed.
 - QML's `URL` mangles `data:` URLs (and `new URL(rel, base)` with them);
   leave absolute URLs alone.
 - `destroy()` is deferred: a test that checks a `JsonStore` flush on

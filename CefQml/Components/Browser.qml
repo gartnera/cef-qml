@@ -57,6 +57,10 @@ FocusScope {
     // The address bar's drop-down (AddressSuggestions): add your own
     // sources with addressSuggestions.addProvider(...).
     property alias addressSuggestions: suggestions
+    // The history overlay (HistoryView; action "history.show", Ctrl+H) and
+    // whether it is shown.
+    property alias historyView: historyPanel
+    readonly property bool historyVisible: historyOverlay.visible
 
     signal lastTabClosed()
 
@@ -83,6 +87,8 @@ FocusScope {
         userScriptOverlay.open()
         usManager.review(url)
     }
+    function showHistory() { historyOverlay.open() }
+    function hideHistory() { historyOverlay.close() }
     function isUserScriptUrl(url) {
         return /^(https?|file):[^?#]*\.user\.js([?#].*)?$/i.test(String(url))
     }
@@ -202,43 +208,47 @@ FocusScope {
             tabs: webTabs
         }
 
-        Item {
+        // Manager panels; opening one closes the other.
+        PanelOverlay {
             id: userScriptOverlay
             objectName: "userScriptOverlay"
             anchors.fill: parent
-            visible: false
-            function open() {
-                if (!browser.userScriptStore) return
-                visible = true
-                usManager.focusDefault()
-            }
-            function close() {
-                if (!visible) return
-                visible = false
-                if (webTabs.currentView) webTabs.currentView.forceActiveFocus()
-            }
-            function toggle() { visible ? close() : open() }
-
-            Rectangle {
-                anchors.fill: parent
-                color: "#80000000"
-                MouseArea {
-                    anchors.fill: parent
-                    acceptedButtons: Qt.AllButtons
-                    onClicked: userScriptOverlay.close()
-                    onWheel: {}
-                }
-            }
+            available: browser.userScriptStore !== null
+            returnFocusTo: webTabs.currentView
+            onOpened: historyOverlay.close()
             UserScriptManager {
                 id: usManager
                 objectName: "userScriptManager"
-                anchors.horizontalCenter: parent.horizontalCenter
-                y: Math.max(8, Math.min(48, (parent.height - 600) / 2))
-                width: Math.min(820, parent.width - 32)
-                height: Math.min(600, parent.height - 2 * y)
+                anchors.fill: parent
                 store: browser.userScriptStore
                 view: webTabs.currentView
                 onCloseRequested: userScriptOverlay.close()
+            }
+        }
+
+        PanelOverlay {
+            id: historyOverlay
+            objectName: "historyOverlay"
+            anchors.fill: parent
+            panelWidth: 760
+            available: browser.historyStore !== null
+            returnFocusTo: webTabs.currentView
+            onOpened: userScriptOverlay.close()
+            HistoryView {
+                id: historyPanel
+                objectName: "historyView"
+                anchors.fill: parent
+                store: browser.historyStore
+                // Click: open here and close; Ctrl/middle click: background tab.
+                onOpenRequested: (url, newTab) => {
+                    if (newTab) {
+                        ctl.openTab(url, { background: true, index: webTabs.currentIndex + 1 })
+                        return
+                    }
+                    historyOverlay.close()
+                    ctl.navigate(url)
+                }
+                onCloseRequested: historyOverlay.close()
             }
         }
     }
@@ -301,6 +311,7 @@ FocusScope {
         findBar: findBar
         window: browser.Window.window
         userScriptManager: browser.userScriptStore ? userScriptOverlay : null
+        historyView: browser.historyStore ? historyOverlay : null
     }
 
     // Install prompt for *.user.js pages loaded in the current tab.

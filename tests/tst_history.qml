@@ -353,6 +353,9 @@ Item {
         }
         function resetTabs(title) {
             mouseMove(root, root.width - 5, root.height - 5)
+            browser.hideHistory()
+            browser.hideUserScripts()
+            browser.historyView.filterText = ""
             browser.tabs.restore([page(title || "start")], 0)
             tryCompare(browser, "title", title || "start", 10000)
             view().forceActiveFocus()
@@ -608,6 +611,151 @@ Item {
             compare(history.count, 0)
             compare(types(), ["search"])
             keyClick(Qt.Key_Escape)
+        }
+
+        function test_08_history_view_keyboard_and_ctrl_h() {
+            resetTabs()
+            const now = Date.now()
+            history.recordVisit(page("Charlie visit"), { title: "Charlie visit", time: now - 3 * root.day })
+            history.recordVisit(page("Bravo visit"), { title: "Bravo visit", time: now - root.day })
+            history.recordVisit(page("Alpha visit"), { title: "Alpha visit", time: now })
+            const hv = browser.historyView
+            const overlay = find("historyOverlay")
+            const search = find("historySearch")
+            verify(!browser.historyVisible)
+            verify(!browser.actions.action("history.show").checked)
+            keyClick(Qt.Key_H, Qt.ControlModifier)
+            tryVerify(() => browser.historyVisible, 2000, "Ctrl+H shows the history")
+            verify(overlay.visible)
+            verify(browser.actions.action("history.show").checked)
+            tryVerify(() => search.activeFocus, 2000, "the search field has focus")
+            compare(hv.count, 3)
+            compare(hv.entryAt(0).title, "Alpha visit", "newest first")
+            compare(hv.entryAt(2).title, "Charlie visit")
+            compare(hv.dayLabel(hv.entryAt(0).day), "Today")
+            compare(hv.dayLabel(hv.entryAt(1).day), "Yesterday")
+            verify(hv.dayLabel(hv.entryAt(2).day).length > 9, "older days show the date")
+            compare(find("historyList").section.property, "day")
+            verify(hv.rowAt(2), "rows are created")
+            compare(hv.currentIndex, -1)
+
+            // Searching filters and selects the first match.
+            type("bravo")
+            compare(hv.filterText, "bravo")
+            compare(hv.count, 1)
+            compare(hv.currentIndex, 0)
+            compare(hv.entryAt(0).title, "Bravo visit")
+            keyClick(Qt.Key_Escape)
+            compare(hv.filterText, "", "the first Escape clears the search")
+            verify(browser.historyVisible)
+            compare(hv.count, 3)
+
+            // Arrows, Shift+Delete, Enter.
+            type("visit")
+            compare(hv.currentIndex, 0)
+            keyClick(Qt.Key_Down)
+            keyClick(Qt.Key_Down)
+            keyClick(Qt.Key_Down)
+            compare(hv.currentIndex, 2, "stops at the last row")
+            keyClick(Qt.Key_Up)
+            compare(hv.currentIndex, 1)
+            keyClick(Qt.Key_Delete, Qt.ShiftModifier)
+            verify(!history.contains(page("Bravo visit")))
+            compare(hv.count, 2)
+            compare(hv.currentIndex, 1)
+            compare(hv.filterText, "visit", "the search text is kept")
+            compare(hv.entryAt(1).title, "Charlie visit")
+            keyClick(Qt.Key_Return)
+            tryVerify(() => !browser.historyVisible, 2000, "opening closes the overlay")
+            tryCompare(browser, "title", "Charlie visit", 10000)
+            tryVerify(() => view().activeFocus, 2000, "the page gets focus back")
+
+            // Ctrl+H toggles, also while typing in the search field.
+            keyClick(Qt.Key_H, Qt.ControlModifier)
+            tryVerify(() => browser.historyVisible && search.activeFocus, 2000)
+            keyClick(Qt.Key_H, Qt.ControlModifier)
+            tryVerify(() => !browser.historyVisible, 2000, "Ctrl+H hides it again")
+            browser.trigger("history.show")
+            tryVerify(() => search.activeFocus, 2000)
+            hv.filterText = ""
+            keyClick(Qt.Key_Escape)
+            verify(!browser.historyVisible, "Escape with an empty search closes")
+            tryVerify(() => view().activeFocus, 2000)
+
+            // One manager overlay at a time.
+            browser.showHistory()
+            verify(browser.historyVisible)
+            browser.trigger("userscripts.manage")
+            verify(browser.userScriptManagerVisible)
+            verify(!browser.historyVisible, "opening the userscript manager closes the history")
+            browser.showHistory()
+            verify(!browser.userScriptManagerVisible, "and the other way round")
+            browser.hideHistory()
+            verify(!browser.historyVisible)
+        }
+
+        function test_09_history_view_mouse_and_clear() {
+            resetTabs()
+            const now = Date.now()
+            history.recordVisit(page("Old one"), { title: "Old one", time: now - 2 * 3600 * 1000 })
+            history.recordVisit(page("Mouse one"), { title: "Mouse one", time: now - 1000 })
+            history.recordVisit(page("Mouse two"), { title: "Mouse two", time: now })
+            const hv = browser.historyView
+            browser.showHistory()
+            tryVerify(() => find("historySearch").activeFocus, 2000)
+            compare(hv.count, 3)
+
+            // Click opens in the current tab and closes the overlay.
+            click(hv.rowAt(0))
+            tryVerify(() => !browser.historyVisible, 2000)
+            tryCompare(browser, "title", "Mouse two", 10000)
+            compare(browser.tabs.count, 1)
+
+            // Middle click opens a background tab and keeps the overlay.
+            browser.showHistory()
+            tryCompare(hv, "count", 3, 5000)
+            compare(hv.entryAt(1).title, "Mouse one")
+            click(hv.rowAt(1), Qt.MiddleButton)
+            tryCompare(browser.tabs, "count", 2, 5000)
+            verify(browser.historyVisible)
+            compare(browser.tabs.currentIndex, 0, "opened in the background")
+            tryCompare(browser.tabs.views[1], "title", "Mouse one", 10000)
+            tryVerify(() => history.entry(page("Mouse one")).visitCount === 2, 5000)
+            compare(hv.entryAt(0).title, "Mouse one", "background tabs are recorded too")
+
+            // × removes one entry.
+            compare(hv.count, 3)
+            const top = hv.entryAt(0).url
+            click(findChild(hv.rowAt(0), "historyRemove"))
+            verify(!history.contains(top))
+            compare(hv.count, 2)
+
+            // Clear history: last hour keeps the older entry, then everything.
+            const clear = find("historyClear")
+            click(clear)
+            verify(hv.clearing)
+            click(find("historyClearCancel"))
+            verify(!hv.clearing)
+            compare(history.count, 2)
+            click(clear)
+            click(find("historyClearHour"))
+            verify(!hv.clearing)
+            compare(history.count, 1)
+            compare(history.get(0).title, "Old one")
+            compare(hv.status, "Removed 1 entry")
+            click(clear)
+            click(find("historyClearAll"))
+            compare(history.count, 0)
+            compare(hv.count, 0)
+            verify(find("historyEmpty").visible)
+            verify(!clear.enabled, "nothing left to clear")
+
+            // A click on the dimmed backdrop closes the overlay.
+            const panel = find("historyOverlay").panelItem
+            const p = panel.mapToItem(root, -40, panel.height / 2)
+            mouseClick(root, p.x, p.y)
+            tryVerify(() => !browser.historyVisible, 2000)
+            tryVerify(() => view().activeFocus, 2000)
         }
     }
 }

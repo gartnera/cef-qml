@@ -28,6 +28,10 @@ Item {
         // URL offers to install it. browser.userScriptStore holds them
         // (Cef.dataDir/userscripts); userScriptStore: null turns them off.
 
+        // History: recorded in Cef.dataDir/history.json, searched by the
+        // address bar, Ctrl+H shows it. historyStore: null turns it off;
+        // browser.historyStore.recording = false is private browsing.
+
         // An action of your own; give it keys here or in `bindings`.
         // BrowserAction {
         //     registry: browser.actions
