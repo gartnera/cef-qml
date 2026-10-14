@@ -28,11 +28,14 @@ Notes for contributors (human or agent). Read this before changing anything.
   `subprojects/packagefiles/cef/meson.build` builds `libcef_dll_wrapper`.
   When editing that overlay, also copy it to the extracted
   `subprojects/cef_binary_*/meson.build` (or wipe the extracted dir).
+- `scripts/` — `make-release.sh` / `verify-release.sh` (prebuilt tarball).
+- `.github/` — CI and release workflows; `apt-packages.txt` is the Ubuntu
+  24.04 dependency list both use.
 
 ## Build and test
 
 ```sh
-meson setup build            # first time; downloads CEF (~100 MB)
+meson setup build            # first time; downloads CEF (~310 MB)
 meson compile -C build
 meson test -C build --print-errorlogs        # offscreen + wayland suites
 tests/run.sh build offscreen                 # all suites, offscreen only
@@ -44,7 +47,10 @@ QML_IMPORT_PATH=build qml examples/browser/main.qml
 - Wayland mode starts a private headless Weston. It has no seat, so window
   shortcuts never fire there; `tst_browser.qml`-style keyboard tests only work
   offscreen (the meson `wayland` test runs `tst_webview.qml` only).
-- Each run gets a fresh profile (`CEF_QML_CACHE_DIR`).
+- Each run gets a fresh profile (`CEF_QML_CACHE_DIR`) and scratch dir
+  (`CEF_QML_TEST_DIR`, for downloads and the files `tst_hotreload` writes);
+  nothing is written into `<builddir>`, so `tests/run.sh` also runs against
+  an installed or extracted `qml/` dir.
 - Tests use `data:` URLs or `loadHtml` — no network.
 - `meson test -C build cdp-remote` runs `tests/cdp_remote.py build`: it starts
   the reference browser, drives it over the remote-debugging port and checks
@@ -78,6 +84,33 @@ handlers, or (when the host had none) turns these signals into
 `QCoreApplication::exit(0)`, so `aboutToQuit` and `CefShutdown` run; a second
 signal kills the process the default way.
 
+## CI and releases
+
+- `.github/workflows/ci.yml`: Ubuntu 24.04 (Qt 6.4.2), `meson setup`,
+  compile, `meson test --print-errorlogs` on pushes and PRs to `main`; the
+  CEF download (`subprojects/packagecache`) is cached by the hash of
+  `subprojects/cef.wrap`; `meson-logs/` is uploaded on failure.
+- `.github/workflows/release.yml`: on a `v*` tag (must match the `meson.build`
+  version, optionally with a `-suffix`, which makes a prerelease) or a manual
+  run. Builds `cef-qml-<version>-linux-x86_64.tar.gz` and publishes it on tags.
+- Local equivalent:
+
+  ```sh
+  meson setup build-release --prefix=/ --libdir=lib -Dqml_dir=qml -Druntime_dir=lib/cef-qml
+  scripts/make-release.sh build-release dist     # strips libcef.so (1.4 GB -> ~270 MB)
+  scripts/verify-release.sh dist/cef-qml-*.tar.gz
+  ```
+
+  `verify-release.sh` extracts into a temp dir, checks with `ldd` that
+  libcef.so resolves inside the extracted tree and runs the offscreen and
+  cdp-remote suites against it. Move `build*/` and
+  `subprojects/cef_binary_*` aside first to prove nothing depends on them.
+  The plugin's RUNPATH is relative (`$ORIGIN/../../lib/cef-qml`) whenever
+  `qml_dir` and `runtime_dir` are both inside the prefix (`meson.build`).
+- Keep the scratch dir short: Chromium puts its singleton socket in `TMPDIR`,
+  and a `TMPDIR` too long for a Unix socket path aborts at startup
+  ("Socket path too long").
+
 ## Gotchas (learned the hard way)
 
 - All CEF browser-process callbacks run on the Qt GUI thread (external pump).
@@ -108,6 +141,11 @@ signal kills the process the default way.
   mode on affected Qt. CEF is not involved: `CefShutdown` (post routine) runs
   at the top of `~QGuiApplication`, before the platform integration dies.
 - Wait for `loading == false`, not just the title, before `find()` in tests.
+- With `qml6-module-qtquick-dialogs` installed, `tst_browser`'s
+  `test_13_context_menu_open_link` and `test_21_clipboard_bridge` were seen
+  to fail intermittently (about half of the offscreen runs); without it they
+  pass reliably. CI does not install it. Not yet investigated
+  (`FileDialogHandler` creating Qt's dialogs is the likely difference).
 - QML: a `Loader` property named `item` shadows `Loader.item`; ambiguous
   `Shortcut` sequences (the same keys bound twice) never fire.
 - XMLHttpRequest file writes in tests are asynchronous; wait for `DONE`.

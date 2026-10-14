@@ -1,0 +1,114 @@
+name: Release
+
+# Builds the relocatable prebuilt tarball cef-qml-<version>-linux-x86_64.tar.gz
+# (see scripts/make-release.sh). Tags v* publish it as a GitHub release asset;
+# a manual run only uploads it as a workflow artifact.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  tarball:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          grep -v -e '^#' -e '^$' .github/apt-packages.txt |
+            xargs sudo apt-get install -y --no-install-recommends
+
+      - name: Restore CEF download
+        id: cef-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: subprojects/packagecache
+          key: cef-${{ runner.os }}-${{ hashFiles('subprojects/cef.wrap') }}
+
+      # "/" prefix: the installed tree is the tarball layout, and the plugin
+      # gets the relative RUNPATH $ORIGIN/../../lib/cef-qml.
+      - name: Configure
+        run: |
+          meson setup build-release --buildtype=release --prefix=/ --libdir=lib \
+            -Dqml_dir=qml -Druntime_dir=lib/cef-qml
+
+      - name: Save CEF download
+        if: steps.cef-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: subprojects/packagecache
+          key: cef-${{ runner.os }}-${{ hashFiles('subprojects/cef.wrap') }}
+
+      - name: Determine version
+        id: version
+        run: |
+          project=$(meson introspect build-release --projectinfo |
+            python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])')
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version=${GITHUB_REF_NAME#v}
+            if [ "${version%%-*}" != "$project" ]; then
+              echo "::error::tag $GITHUB_REF_NAME does not match version $project in meson.build"
+              exit 1
+            fi
+          else
+            version=$project-g$(git rev-parse --short HEAD)
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+
+      - name: Build
+        run: meson compile -C build-release
+
+      - name: Test
+        run: meson test -C build-release --print-errorlogs
+
+      - name: Make tarball
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: scripts/make-release.sh build-release dist
+
+      # Run the suites against the extracted tarball alone: move the build
+      # tree and the extracted CEF distribution out of the way first.
+      - name: Verify tarball
+        run: |
+          mkdir "$RUNNER_TEMP/aside"
+          mv build-release subprojects/cef_binary_* "$RUNNER_TEMP/aside/"
+          scripts/verify-release.sh dist/cef-qml-*-linux-x86_64.tar.gz "$RUNNER_TEMP/verify"
+
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: meson-logs
+          path: |
+            build-release/meson-logs/
+            ${{ runner.temp }}/aside/build-release/meson-logs/
+          if-no-files-found: ignore
+
+      - name: Upload tarball artifact
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: cef-qml-${{ steps.version.outputs.version }}-linux-x86_64
+          path: dist/
+          compression-level: 0
+          if-no-files-found: error
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v3.0.3
+        with:
+          files: |
+            dist/cef-qml-*-linux-x86_64.tar.gz
+            dist/cef-qml-*-linux-x86_64.tar.gz.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
