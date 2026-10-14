@@ -252,6 +252,7 @@ page while user scripts are registered, then loads `url`.
 | `discarded` | bool | read/write | `true` frees the browser (memory, processes) but keeps `url`, `title`, `icon`, `zoomFactor`, `audioMuted` and `userScripts`; `false` (or `reload()`) creates it again and loads `url`. Declared `true`, no browser is created until it turns `false`. Back/forward history and page state are lost; pending `devToolsMethod`/`evaluateJavaScript` calls are dropped, so re-run setup on `discardedChanged()`. |
 | `frameCount` | int | read-only | Frames received so far (notifies through `frameSwapped`). |
 | `userScripts` | list&lt;string&gt; | read/write | JavaScript sources run in every new document before the page's own scripts (`Page.addScriptToEvaluateOnNewDocument`). |
+| `editableFocused` | bool | read-only | The focused element of the page takes typed text: an enabled text `<input>`, `<textarea>` or `<select>`, a `contenteditable` element or a `designMode` document (in the main frame or a same-process iframe). Tracked by focus events in the page: it is false while the view itself does not have the keyboard focus. Use it to give single-key bindings to the page only while the user is not typing (see [Link hints and keyboard browsing](#link-hints-and-keyboard-browsing)). |
 
 Enum `CefWebView.ConsoleLevel`: `Debug`, `Info`, `Warning`, `Error`.
 
@@ -268,10 +269,14 @@ Enum `CefWebView.ConsoleLevel`: `Debug`, `Info`, `Warning`, `Error`.
 | `find(string text, bool forward = true, bool matchCase = false)` | Find in page; results arrive through `findResult`. Repeat with the same text for the next match. |
 | `stopFinding(bool clearSelection = true)` | |
 | `copy()`, `cut()`, `paste()`, `selectAll()`, `undo()`, `redo()` | Edit commands on the focused frame (`paste()` uses the system clipboard). |
+| `sendMouseClick(real x, real y, int button = Qt.LeftButton, int modifiers = 0, int clickCount = 1)` | A real, trusted click (`event.isTrusted`) at item coordinates: moves the pointer there, gives the view the keyboard focus and presses and releases `button` (`Qt.LeftButton`, `Qt.MiddleButton`, `Qt.RightButton`) `clickCount` times with `modifiers` (`Qt.KeyboardModifier` flags). A middle click on a link emits `newWindowRequested` with `background` true (Shift+middle: false). |
+| `sendMouseMove(real x, real y, int modifiers = 0)` | Moves the pointer (hover, `mouseover`). |
+| `sendMouseWheel(real x, real y, int deltaX, int deltaY, int modifiers = 0, bool pixels = false)` | Wheel at item coordinates; deltas as `QWheelEvent.angleDelta` (120 per notch), or pixels. |
+| `sendKey(int key, int modifiers = 0, string text = "")` | Presses and releases `key` (a `Qt.Key`) in the focused element; `text` defaults to the key's character for printable keys without Ctrl/Alt/Meta. |
 
 | Signal | Description |
 |---|---|
-| `urlChanged()`, `titleChanged()`, `iconChanged()`, `loadingChanged()`, `loadProgressChanged()`, `navigationStateChanged()` (`canGoBack`/`canGoForward`), `hoveredUrlChanged()`, `tooltipChanged()`, `zoomFactorChanged()`, `audioMutedChanged()`, `fullscreenChanged()`, `backgroundColorChanged()`, `frameRateChanged()`, `activeChanged()`, `readyChanged()`, `userScriptsChanged()`, `discardedChanged()` | Property notifications. |
+| `urlChanged()`, `titleChanged()`, `iconChanged()`, `loadingChanged()`, `loadProgressChanged()`, `navigationStateChanged()` (`canGoBack`/`canGoForward`), `hoveredUrlChanged()`, `tooltipChanged()`, `zoomFactorChanged()`, `audioMutedChanged()`, `fullscreenChanged()`, `backgroundColorChanged()`, `frameRateChanged()`, `activeChanged()`, `readyChanged()`, `userScriptsChanged()`, `discardedChanged()`, `editableFocusedChanged()` | Property notifications. |
 | `frameSwapped()` | A new frame was rendered. |
 | `loadStarted(url url)` | A main-frame load (a new document) started. Not emitted for same-document navigations (`#fragment`, `history.pushState`). |
 | `loadFinished(url url, int httpStatusCode)` | Main frame finished loading. Chromium's error page for a failed load emits it too (after `loadFailed`). |
@@ -550,11 +555,11 @@ through `Style`, or copy one as the starting point for your own.
 
 | Component | Purpose and key API |
 |---|---|
-| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts), `userScriptManager` (the `UserScriptManager` overlay), `userScriptManagerVisible`, `offerUserScriptInstall` (default true), `historyStore` (a `HistoryStore` on `history.json`; null disables history), `addressSuggestions` (the address bar's `AddressSuggestions`), `historyView` (the `HistoryView` overlay), `historyVisible`, `bookmarkStore` (a `BookmarkStore` on `bookmarks.json`; null disables bookmarks), `showBookmarksBar`, `bookmarksBar`, `bookmarkManager` (the `BookmarkManager` overlay), `bookmarkManagerVisible`, `sessionStore` (a `SessionStore` on `<sessionName>.json`; null keeps no session), `sessionName` (default `"session"`; one per `Browser` of a process), `restoreSession` (`"always"`, `"never"` or `"ifCrashed"`, the default), `sessionRestored`, `tabMenu` (the tab strip's right-click menu), `recentlyClosedMenu` (a `RecentlyClosedMenu`), `commandPalette` (a `CommandPalette`), `commandPaletteVisible`. See [Sessions](#sessions) and [Command palette](#command-palette). Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`, `showUserScripts()`, `hideUserScripts()`, `showHistory()`, `hideHistory()`, `showBookmarks()`, `hideBookmarks()`, `showCommandPalette(prefix)`, `hideCommandPalette()`, `openBookmark(url, newTab)`, `showTabMenu(index, item, x, y)`, `reviewUserScript(url)`, `isUserScriptUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
+| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts), `userScriptManager` (the `UserScriptManager` overlay), `userScriptManagerVisible`, `offerUserScriptInstall` (default true), `historyStore` (a `HistoryStore` on `history.json`; null disables history), `addressSuggestions` (the address bar's `AddressSuggestions`), `historyView` (the `HistoryView` overlay), `historyVisible`, `bookmarkStore` (a `BookmarkStore` on `bookmarks.json`; null disables bookmarks), `showBookmarksBar`, `bookmarksBar`, `bookmarkManager` (the `BookmarkManager` overlay), `bookmarkManagerVisible`, `sessionStore` (a `SessionStore` on `<sessionName>.json`; null keeps no session), `sessionName` (default `"session"`; one per `Browser` of a process), `restoreSession` (`"always"`, `"never"` or `"ifCrashed"`, the default), `sessionRestored`, `tabMenu` (the tab strip's right-click menu), `recentlyClosedMenu` (a `RecentlyClosedMenu`), `commandPalette` (a `CommandPalette`), `commandPaletteVisible`, `linkHints` (a `LinkHints` over the current tab). See [Sessions](#sessions), [Command palette](#command-palette) and [Link hints](#link-hints-and-keyboard-browsing). Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`, `showUserScripts()`, `hideUserScripts()`, `showHistory()`, `hideHistory()`, `showBookmarks()`, `hideBookmarks()`, `showCommandPalette(prefix)`, `hideCommandPalette()`, `openBookmark(url, newTab)`, `showTabMenu(index, item, x, y)`, `reviewUserScript(url)`, `isUserScriptUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
 | `BrowserController` | Non-visual programmatic API over a `WebTabs` (`tabs`): navigation that reports its result, tab helpers, zoom, recently closed tabs. See below. |
 | `BrowserAction` | A named command: `name` (`"tab.new"`), `text`, `description`, `category`, `enabled`, `checkable`/`checked`, `defaultShortcuts`, `showInPalette` (default true; false for actions that need arguments), signal `triggered(args)`, `trigger(args)`. |
 | `ActionRegistry` | A set of `BrowserAction`s looked up and run by name: `model` (for menus or a command palette), `count`, `action(name)`, `has(name)`, `names()`, `trigger(name, args)`, `add(action or { name, text, defaultShortcuts, onTriggered })`, `remove(nameOrAction)`, signal `actionTriggered(name, args)`. |
-| `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar`, `window`, `userScriptManager`, `historyView` and `bookmarkManager` (anything with `toggle()` and `visible`, e.g. a `PanelOverlay`), `bookmarkStore`, `bookmarkButton` and `bookmarksBarTarget` / `bookmarksBarProperty` (the object and boolean property `bookmarks.showBar` toggles; default property `"visible"`), `recentlyClosedMenu`, `sessionStore` and `commandPalette` they act on. |
+| `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar`, `window`, `userScriptManager`, `historyView` and `bookmarkManager` (anything with `toggle()` and `visible`, e.g. a `PanelOverlay`), `bookmarkStore`, `bookmarkButton` and `bookmarksBarTarget` / `bookmarksBarProperty` (the object and boolean property `bookmarks.showBar` toggles; default property `"visible"`), `recentlyClosedMenu`, `sessionStore`, `commandPalette` and `linkHints` they act on. |
 | `KeyBindings` | Window-wide keyboard shortcuts for an `ActionRegistry` (`actions`): defaults from the actions, `bindings` overrides, conflict resolution, modes. See below. |
 | `UserScriptStore` | Installed userscripts and their GM values, persisted under `Cef.dataDir`, injected into attached views. See [Userscripts](#userscripts). |
 | `UserScriptManager` | Manager UI for a `UserScriptStore` (`store`), with `view` for "running on this page". See [Managing scripts](#managing-scripts). |
@@ -570,6 +575,7 @@ through `Style`, or copy one as the starting point for your own.
 | `AddressField` | URL/search field bound to `view`: shows the page URL while not edited; Enter navigates, non-addresses are searched with `searchUrl` (`%s` = query); Escape restores the page URL, a second Escape (or one with nothing edited) returns focus to the page. `text`, `input`, `isInternalUrl` (urls shown as an empty field), `suggestions` (set by `AddressSuggestions`), `urlFor(text)`, `go(url)` (load in `view` and focus it; the same URL reloads), `focusAndSelect()`, signal `navigated(url)`. |
 | `AddressSuggestions` | Drop-down and inline autocompletion for an `AddressField` from open tabs, a `HistoryStore` and your own providers. See [Address bar suggestions](#address-bar-suggestions). |
 | `CommandPalette` | Keyboard-first overlay that runs actions, switches tabs, reopens closed tabs and opens bookmarks, history entries or typed addresses, with fuzzy matching and your own providers. See [Command palette](#command-palette). |
+| `LinkHints` | Keyboard link hints (as in Vimium or qutebrowser) for a `view`: labels the clickable elements in view, typing a label clicks, opens, copies, focuses or hovers one. See [Link hints and keyboard browsing](#link-hints-and-keyboard-browsing). |
 | `FindBar` | Find-in-page bar for `view`: Enter next, Shift+Enter previous, Escape closes. `text`, `matchCount`, `activeMatch`, `matchCase`, `open()`, `close()`, `findNext(forward)`, signal `closeRequested()`. |
 | `RequestOverlay` | Shows JavaScript dialogs and permission prompts of a `WebTabs` (`tabs`, required) as an in-page card; requests of background tabs wait until their tab is shown. `rememberPermissions` (per origin and permission, this session). |
 | `ContextMenu` | Right-click menu for a `WebTabs` (`tabs`, required), drawn inside the window: open/copy link, undo/redo/cut/copy/paste/select all in editable fields, copy selection, otherwise back/forward/reload. Signal `openLinkInNewTab(url)`; `show(view, x, y, linkUrl, selectedText, editable)`, `close()`. |
@@ -1188,12 +1194,22 @@ and the same pieces work in a layout of your own.
 | `bookmarks.showBar` | Ctrl+Shift+B | checkable: shows / hides the bookmarks bar; `{ show }` sets it |
 | `bookmarks.manage` | Ctrl+Shift+O | shows / hides the bookmark manager; `checked` while shown |
 | `palette.show` | Ctrl+Shift+P (commands), Ctrl+K | shows / hides the command palette; `{ prefix }` opens a mode (`">"`, `"@"`, `"*"`, `"#"`); `checked` while shown |
+| `hints.open` | Alt+F | link hints: typing a label clicks the element; args: `LinkHints.show()` options (e.g. `{ modifiers: Qt.ControlModifier }`); needs `linkHints` |
+| `hints.newTab` | Alt+Shift+F | link hints for links: opens one in a background tab (`{ background: false }`: in front) |
+| `hints.copyLink` | | link hints for links: copies one's address |
+| `hints.focusInput` | | focuses the page's first text field, or the next one while one has the focus (args: `BrowserController.focusInput()` options) |
+| `page.scrollDown`, `page.scrollUp`, `page.scrollLeft`, `page.scrollRight` | | scrolls `controller.scrollStep` CSS px (`{ amount }`, `{ smooth }`) |
+| `page.scrollPageDown`, `page.scrollPageUp` | | scrolls 0.9 of the visible height (`{ pages }`) |
+| `page.scrollTop`, `page.scrollBottom` | | |
 
 Every action has a human-readable `text`, and `enabled` follows the state
 (e.g. `nav.back` only with history). Disabled actions do not run, and their
 keys go through to the page or the focused field. Actions without default
-keys (`nav.stop`, `edit.*`) are meant for menus, palettes and your own
-bindings: window-wide Escape or Ctrl+C would take those keys from pages.
+keys (`nav.stop`, `edit.*`, `page.scroll*`) are meant for menus, palettes and
+your own bindings: window-wide Escape, Ctrl+C or arrow keys would take those
+keys from pages. Window-wide keys always win over the page: Alt+F and
+Alt+Shift+F shadow a page's `accesskey="f"` (Alt+key on Linux); rebind
+`hints.*` if that matters to you.
 
 **Rebinding keys.** `bindings` maps an action name to its keys, replacing the
 action's defaults; `[]` unbinds it. A key is a sequence string (`"Ctrl+K"`,
@@ -1234,7 +1250,8 @@ Browser {
     id: browser
     property bool viMode: false   // e.g. toggled by an action of yours
     // Single letters are window-wide while the mode is on: only use such a
-    // mode while the user is not typing.
+    // mode while the user is not typing (see the modal example in
+    // "Link hints and keyboard browsing").
     keyBindings.modeBindings: ({ "vi": { "nav.back": ["H"], "nav.forward": ["L"], "tab.close": ["D"] } })
     keyBindings.mode: viMode ? "vi" : ""
 }
@@ -1296,7 +1313,9 @@ browser.navigate("https://example.org/slow", { tab: 2, timeout: 10000 })
 | `closedTabs` | Recently closed tabs, most recent last: `[{ url, title, icon, index, time, zoom }]` (`index`: position when closed; `time`: ms since the epoch), at most `closedTabsLimit` (25). Writable; a `SessionStore` persists it. Internal pages (`isInternalUrl`) are not remembered. |
 | `reopenClosedTab(i)`, `forgetClosedTab(i)`, `clearClosedTabs()` | Reopen `closedTabs[i]` (default: the most recent) at its old position with its title, icon and zoom, and return the view; remove one; remove all. |
 | `discardTab(tab)` | Free a background tab's browser (`WebTabs.discard()`). |
-| `currentView`, `count`, `currentIndex`, `searchUrl`, `zoomStep`, `isInternalUrl`, `urlFor(text)` | |
+| `scrollPage(how, opts, tab)` | Scrolls the page without focusing it: `how` is `"up"`, `"down"`, `"left"`, `"right"` (`scrollStep` CSS px, default 60, or `opts.amount`), `"pageUp"`, `"pageDown"` (`opts.pages` of the visible size, default 0.9), `"top"` or `"bottom"`; `opts.smooth` animates. It moves the scrollable element around the focused element or the middle of the page, else the document. Returns a Promise of `{ ok, moved, element, x, y }`. |
+| `focusInput(opts, tab)` | Focuses the view and a text field of its page: the first visible one, `opts.next` / `opts.previous` (relative to the focused one), or `opts.index`; `opts.select` selects its text. Promise of `{ ok, count, index }`. |
+| `currentView`, `count`, `currentIndex`, `searchUrl`, `zoomStep`, `scrollStep`, `isInternalUrl`, `urlFor(text)` | |
 
 ```qml
 // reuse a tab if one already shows the site
@@ -1325,6 +1344,107 @@ by two `Shortcut`s as ambiguous and fires neither (a disabled `Shortcut` can
 still take part). `KeyBindings` releases the keys of disabled actions and all
 keys while it is disabled, so several can take turns, but keep your own
 `Shortcut`s off the keys it uses.
+
+### Link hints and keyboard browsing
+
+`LinkHints` labels the clickable elements visible in a `CefWebView`, as in
+Vimium or qutebrowser; typing a label acts on its element. `Browser` has one
+(`linkHints`): Alt+F clicks, Alt+Shift+F opens a link in a background tab.
+In your own layout, put it over the view and hand it to `BrowserActions`:
+
+```qml
+Item {
+    WebTabs { id: tabs; anchors.fill: parent }
+    LinkHints { id: hints; anchors.fill: parent; view: tabs.currentView }
+}
+BrowserController { id: browse; tabs: tabs }
+BrowserActions { id: actions; controller: browse; linkHints: hints }   // hints.*
+KeyBindings { actions: actions }
+// or directly:
+Shortcut { sequence: "Ctrl+;"; onActivated: hints.show("copy") }
+```
+
+The labels are a QML overlay positioned with `mapToItem()` (the page's DOM is
+not changed), so the item must be above the view in z order and cover it; it
+may cover more, e.g. the whole window, and is only visible while hinting.
+Elements are found by a script in an isolated world (the page cannot see or
+break it): links, buttons, form fields, `summary`, `label`, `contenteditable`,
+`tabindex`, elements with a clickable ARIA `role` (`button`, `link`, `tab`,
+`checkbox`, `menuitem`, ...) or an `onclick` attribute, and (`pointerHeuristic`)
+other elements with `cursor: pointer`, in the main frame, its same-origin
+iframes and open shadow roots. Hidden, covered, disabled and off-screen
+elements are left out. Positions follow the page zoom, pinch zoom and the
+device pixel ratio.
+
+| Mode (`show(mode, options)`) | Typing a label... |
+|---|---|
+| `"open"` (default) | clicks the element: a real, trusted click through `sendMouseClick()` (`options.modifiers`, e.g. `Qt.ControlModifier`) |
+| `"newTab"` | links only: a middle click, which `WebTabs` opens as a background tab (`options.background: false` or `backgroundTabs: false`: in front) |
+| `"copy"` | links only: copies the address |
+| `"focus"` | focuses the element (inputs too) |
+| `"hover"` | moves the pointer over it (menus that open on hover) |
+| `function (hint, view)` | calls it with the chosen hint |
+
+`options.elements` picks `"clickable"`, `"links"`, `"focusable"` or `"inputs"`
+(default by mode), `options.selector` any CSS selector instead, and
+`options.pointer` overrides `pointerHeuristic`.
+
+**Keys while hinting.** Label characters (either case) narrow the labels and
+act when one is complete. With `textFilter` (default), other characters
+filter the elements by their text (or address) and the labels are made again
+for the matches; with `activateSingleMatch` (default) a single match acts at
+once. Enter acts on the first match, Backspace takes back a character,
+Escape cancels, and so does a click, a wheel turn, losing the focus, a load
+or a resize of the view. While hinting, these keys go to the hints, not to
+the page or window-wide shortcuts; keys typed before the hints appear are
+kept. Afterwards the focus goes back where it was; the clicks (`"open"`,
+`"newTab"`) and `"focus"` give it to the view.
+
+| `LinkHints` | |
+|---|---|
+| `view` | The `CefWebView` to hint. |
+| `alphabet` | Label characters (default `"sadfjklewcmpgh"`). Labels are the shortest the number of hints allows, none a prefix of another. With digits (`"1234567890"`) letters always filter. |
+| `textFilter`, `activateSingleMatch`, `uppercaseLabels`, `pointerHeuristic`, `backgroundTabs` | Behavior, all default true. |
+| `labelColor`, `typedColor`, `labelBackground`, `labelBorder`, `outlineColor`, `fontFamily`, `fontPixelSize` | Look. |
+| `active`, `busy`, `mode` | Hinting, still collecting, the current mode. |
+| `hints` | The elements found: `[{ index, kind ("link", "button", "input", "select", "label", "element"), tag, text, href, frame, x, y, width, height, clickX, clickY }]`; `x`..`height` in this item's coordinates, `clickX`/`clickY` where a click goes in view coordinates. |
+| `labels`, `matches`, `typed`, `filterText` | Each hint's label (`""` while filtered out), the hints still offered, the label characters typed, the filter text (writable). |
+| `show(mode, options)` | Starts hinting; returns false without a ready, visible view. Called again with the same mode while active, it cancels (so one key toggles). |
+| `cancel()`, `activate(hint or label or index)`, `type(text)`, `hintFor(label)` | Stop; act on a hint; type as if from the keyboard; look up a label. |
+| Signals | `shown(count)`, `activated(hint, mode)`, `canceled()`. |
+
+**A vim-like modal setup.** `KeyBindings` modes give single keys to actions
+only while the page itself has the focus, and `editableFocused` gives them
+back while a text field of the page has it:
+
+```qml
+Browser {
+    id: browser
+    keyBindings.mode: currentView && currentView.activeFocus
+                      && !currentView.editableFocused ? "normal" : ""
+    keyBindings.modeBindings: ({
+        "normal": {
+            "page.scrollDown": ["J"], "page.scrollUp": ["K"],
+            "page.scrollLeft": ["H"], "page.scrollRight": ["L"],
+            "page.scrollPageDown": [{ sequence: "D", args: { pages: 0.5 } }],
+            "page.scrollPageUp": [{ sequence: "U", args: { pages: 0.5 } }],
+            "page.scrollTop": ["G, G"], "page.scrollBottom": ["Shift+G"],
+            "hints.open": ["F"], "hints.newTab": ["Shift+F"],
+            "hints.copyLink": ["Y, F"], "page.copyUrl": ["Y, Y"],
+            "hints.focusInput": ["G, I"],
+            "nav.back": ["Shift+H"], "nav.forward": ["Shift+L"], "nav.reload": ["R"],
+            "tab.next": ["Shift+K"], "tab.previous": ["Shift+J"],
+            "tab.close": ["X"], "tab.reopenClosed": ["Shift+X"]
+        }
+    })
+}
+```
+
+The address bar, the find bar and other fields of yours keep every key
+because the view does not have the focus then; Escape in a text field of the
+page does not blur it (the page may use it), so click the page or use
+`hints.focusInput` / `address.focus` to move on. `tests/tst_linkhints.qml`
+runs this exact table.
 
 ## Hot reload
 
@@ -1411,6 +1531,9 @@ Qt logging: the plugin logs under the category `cefqml`
   only; `GM_xmlhttpRequest` uses Qt's network stack without Chromium's
   cookies; no `@resource`, menu commands, notifications, value-change
   listeners or automatic updates.
+- **Link hints, `focusInput` and `scrollPage`** reach the main frame and its
+  same-origin iframes, not cross-origin ones (out-of-process iframes) or
+  closed shadow roots.
 
 ## Testing
 

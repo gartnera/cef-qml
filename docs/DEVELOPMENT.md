@@ -46,6 +46,10 @@ Notes for contributors (human or agent). Read this before changing anything.
   ranking, recently used commands) and `Providers.js` (shared with
   `AddressSuggestions`: calling providers, normalizing items, glyphs, and
   the fuzzy matcher with highlighting).
+  Keyboard browsing: `LinkHints.qml` (hint overlay, labels, keys, modes)
+  and `PageTools.js` (the in-page library run in an isolated world:
+  collecting hint targets, click points, `focusInput`, `scroll`; label
+  generation), also used by `BrowserController.scrollPage` / `focusInput`.
 - `examples/browser/` — the reference application (`main.qml`, `dev.qml` for
   live reload, `BrowserApp.qml`).
 - `tests/` — `qmltestrunner` suites, run by `tests/run.sh` (via `meson test`),
@@ -224,7 +228,10 @@ signal kills the process the default way.
   - `Runtime.executionContextsCleared` marks a main-frame cross-document
     navigation (used to reset "running on this page").
   - A `srcdoc` iframe in a test page makes DevTools hang (`Runtime.evaluate`
-    never answers, `loading` stays true): use `data:` iframes.
+    never answers, `loading` stays true): use `data:` iframes. A `data:`
+    iframe has an opaque origin, though, so it is cross-origin to its page:
+    to test same-origin frames (link hints), let a script fill an
+    `about:blank` iframe (`frame.contentDocument.body.innerHTML = ...`).
   - Out-of-process iframes are separate DevTools targets; the view's session
     does not cover them, so they get no scripts.
 - History / address bar:
@@ -371,6 +378,47 @@ signal kills the process the default way.
     command-line URLs only at 0. On reload the old tree is deleted
     synchronously before the new one loads, so the old `SessionStore` has
     written the session file (and released it) by then.
+- Link hints / keyboard browsing:
+  - Chromium blocks renderer-initiated top-level navigations to `data:`
+    URLs, so a hinted click on a `data:` link does nothing. Test links point
+    at `#fragments` or an unreachable `http://127.0.0.1:9/...` (the load
+    fails, but `loadStarted` and `newWindowRequested` happen).
+  - `PageTools.js` creates one isolated world per view
+    (`Page.getFrameTree` + `Page.createIsolatedWorld`) and evaluates with
+    its `contextId`. The id dies with the document; it is dropped on
+    `loadStarted`, `discardedChanged`, `readyChanged` and
+    `renderProcessTerminated`, but a same-document change or a race can
+    still leave a stale id, and Chromium may reuse a number for another
+    context. So the first run marks the world (`__cefqmlWorld`), a later
+    run that finds no mark throws, and the call is retried once in a new
+    world.
+  - Hint coordinates are CSS pixels of the layout viewport. The scale to
+    item coordinates is `view.width / innerWidth` (page zoom), or
+    `devicePixelRatio / Screen.devicePixelRatio` when both agree (more
+    precise); pinch zoom adds `visualViewport.scale` and offsets.
+  - Test pages without a doctype are in quirks mode, where
+    `documentElement.clientHeight` is the document height, not the
+    viewport's: use `visualViewport.height` / `innerHeight` for the visible
+    size (`PageTools` scroll does).
+  - Keys for an overlay that must beat window-wide `Shortcut`s: accept
+    them in `Keys.onShortcutOverride` (then they arrive in `Keys.onPressed`).
+    `CefWebView` does not accept ShortcutOverride, which is why
+    single-letter mode bindings fire while the page has the focus;
+    `editableFocused` (from a focusin/focusout script and a
+    `\x01cefqml:editable:` console message) is what lets a mode step aside
+    while the user types in the page.
+  - A `KeyBindings` `Shortcut` delegate can be destroyed synchronously
+    while its action runs (an action that changes `mode` rebuilds the
+    bindings): read `modelData` and other context into locals before
+    triggering.
+  - `item.children` (a `QQmlListProperty`) is not iterable with `for ... of`
+    in Qt 6.4 ("Type error"): use an index loop.
+  - A model reset (`beginResetModel`) while a `ListView` is incubating a
+    cache-buffer delegate asynchronously makes Qt 6.4 warn
+    "DelegateModel::cancel: index out range" (`QQuickItemViewPrivate::clear`
+    cancels the old index against the new, smaller count). `HistoryView` and
+    `BookmarkManager` use `cacheBuffer: 0`, which creates no delegates
+    asynchronously.
 - `destroy()` is deferred: a test that checks a `JsonStore` flush on
   destruction must wait (`tryVerify`) for it.
 - C string hex escapes are greedy: write `"\x01" "cefqml:..."`, not
