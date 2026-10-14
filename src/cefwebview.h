@@ -58,6 +58,11 @@ class CefWebView : public QQuickItem {
   // closes a live browser (back/forward history and page state are lost).
   // Setting it back to false (or reload()) loads `url` in a new browser.
   Q_PROPERTY(bool discarded READ discarded WRITE setDiscarded NOTIFY discardedChanged)
+  // True while the focused element of the page (in any frame that runs our
+  // scripts) takes typed text: a text <input>, <textarea>, <select> or
+  // contenteditable element. Tracked by focus events in the page, so it also
+  // turns false while the view itself does not have the keyboard focus.
+  Q_PROPERTY(bool editableFocused READ editableFocused NOTIFY editableFocusedChanged)
 
  public:
   enum ConsoleLevel { Debug = 0, Info, Warning, Error };
@@ -95,6 +100,7 @@ class CefWebView : public QQuickItem {
   void setActive(bool active);
   bool ready() const { return m_ready; }
   int frameCount() const { return m_frameCount; }
+  bool editableFocused() const { return m_editableFocused; }
 
   Q_INVOKABLE void goBack();
   Q_INVOKABLE void goForward();
@@ -132,6 +138,21 @@ class CefWebView : public QQuickItem {
   Q_INVOKABLE void undo();
   Q_INVOKABLE void redo();
 
+  // Real (trusted) input events, as if the user did them; coordinates are
+  // in item space. sendMouseClick moves the pointer there, gives the view
+  // the keyboard focus (as a click does) and presses and releases `button`
+  // `clickCount` times. `modifiers` are Qt.KeyboardModifier flags.
+  Q_INVOKABLE void sendMouseClick(qreal x, qreal y, int button = Qt::LeftButton,
+                                  int modifiers = 0, int clickCount = 1);
+  Q_INVOKABLE void sendMouseMove(qreal x, qreal y, int modifiers = 0);
+  // Wheel deltas as QWheelEvent::angleDelta (120 per notch), or pixels
+  // when `pixels` is true.
+  Q_INVOKABLE void sendMouseWheel(qreal x, qreal y, int deltaX, int deltaY,
+                                  int modifiers = 0, bool pixels = false);
+  // Presses and releases `key` (a Qt.Key) to the focused element. `text`
+  // defaults to the key's character for printable keys without Ctrl/Alt/Meta.
+  Q_INVOKABLE void sendKey(int key, int modifiers = 0, const QString& text = QString());
+
  Q_SIGNALS:
   void urlChanged();
   void titleChanged();
@@ -151,6 +172,7 @@ class CefWebView : public QQuickItem {
   void frameSwapped();
   void userScriptsChanged();
   void discardedChanged();
+  void editableFocusedChanged();
   // DevTools protocol events. Enable a domain first, e.g.
   // devToolsMethod("Network.enable").
   void devToolsEvent(const QString& method, const QVariant& params);
@@ -212,7 +234,8 @@ class CefWebView : public QQuickItem {
   void createBrowser();
   void releaseBrowser();
   CefRefPtr<CefBrowserHost> host() const;
-  void sendMouseClick(QMouseEvent* event, bool up, int clickCount);
+  void forwardMouseButton(QMouseEvent* event, bool up, int clickCount);
+  void setEditableFocused(bool focused);
   QPoint toBrowser(QPointF pos) const;
   qreal devicePixelRatio() const;
   void loadInBrowser(const QUrl& url);
@@ -289,6 +312,7 @@ class CefWebView : public QQuickItem {
   bool m_ready = false;
   bool m_discarded = false;
   int m_frameCount = 0;
+  bool m_imeEnabled = false;  // Chromium's text input mode (IME)
   bool m_editableFocused = false;
   QRect m_imeBounds;
 

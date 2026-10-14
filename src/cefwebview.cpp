@@ -69,6 +69,36 @@ constexpr char kClipboardScript[] = R"JS((() => {
   }
 })();)JS";
 
+// Console messages reporting whether the focused element is editable.
+constexpr char kEditableMessagePrefix[] = "\x01" "cefqml:editable:";
+
+// Installed in every document: reports focus changes to and from editable
+// elements (CefWebView::editableFocused). Each frame reports its own
+// transitions; a focus moving between frames blurs the old one first.
+constexpr char kFocusScript[] = R"JS((() => {
+  const log = console.debug.bind(console);
+  const nonText = new Set(['button', 'checkbox', 'color', 'file', 'hidden', 'image',
+                           'radio', 'range', 'reset', 'submit']);
+  const editable = el => {
+    if (!el || el.nodeType !== 1) return document.designMode === 'on';
+    if (el.isContentEditable) return true;
+    switch (el.localName) {
+      case 'textarea': return !el.readOnly && !el.disabled;
+      case 'input': return !nonText.has(el.type) && !el.readOnly && !el.disabled;
+      case 'select': return !el.disabled;
+    }
+    return document.designMode === 'on';
+  };
+  let last = false;
+  const report = on => {
+    if (on === last) return;
+    last = on;
+    log('\x01cefqml:editable:' + (on ? '1' : '0'));
+  };
+  addEventListener('focusin', e => report(editable(e.composedPath()[0])), true);
+  addEventListener('focusout', e => report(!!e.relatedTarget && editable(e.relatedTarget)), true);
+})();)JS";
+
 CefString cefstr(const QString& s) {
   return CefString(s.toStdU16String());
 }
@@ -237,8 +267,9 @@ void CefWebView::releaseBrowser() {
   m_bootstrapping = false;
   m_dropInitialHistoryEntry = false;
   m_historyResetInFlight = false;
-  m_editableFocused = false;
+  m_imeEnabled = false;
   setFlag(ItemAcceptsInputMethod, false);
+  setEditableFocused(false);
 
   m_view = QImage();
   m_popup = QImage();
@@ -699,11 +730,26 @@ void CefWebView::cefDevToolsEvent(const QString& method, const QByteArray& json)
 }
 
 bool CefWebView::cefConsoleMessage(const QString& message) {
-  static const QString prefix = QString::fromLatin1(kClipboardMessagePrefix);
-  if (!message.startsWith(prefix))
+  if (!message.startsWith(QChar(1)))
     return false;
-  QGuiApplication::clipboard()->setText(message.mid(prefix.size()));
-  return true;
+  static const QString clipboard = QString::fromLatin1(kClipboardMessagePrefix);
+  static const QString editable = QString::fromLatin1(kEditableMessagePrefix);
+  if (message.startsWith(clipboard)) {
+    QGuiApplication::clipboard()->setText(message.mid(clipboard.size()));
+    return true;
+  }
+  if (message.startsWith(editable)) {
+    setEditableFocused(message.mid(editable.size()) == QLatin1String("1"));
+    return true;
+  }
+  return false;
+}
+
+void CefWebView::setEditableFocused(bool focused) {
+  if (focused == m_editableFocused)
+    return;
+  m_editableFocused = focused;
+  Q_EMIT editableFocusedChanged();
 }
 
 void CefWebView::pasteFromSystemClipboard() {
@@ -816,6 +862,8 @@ void CefWebView::applyUserScripts() {
     sendDevTools(QStringLiteral("Page.enable"), {}, nullptr);
     sendDevTools(QStringLiteral("Page.addScriptToEvaluateOnNewDocument"),
                  {{QStringLiteral("source"), QString::fromUtf8(kClipboardScript)}}, nullptr);
+    sendDevTools(QStringLiteral("Page.addScriptToEvaluateOnNewDocument"),
+                 {{QStringLiteral("source"), QString::fromUtf8(kFocusScript)}}, nullptr);
   }
   for (const QString& source : std::as_const(m_userScripts)) {
     sendDevTools(QStringLiteral("Page.addScriptToEvaluateOnNewDocument"),
@@ -896,6 +944,8 @@ void CefWebView::cefLoadError(int errorCode, const QString& errorText, const QUr
 void CefWebView::cefLoadStart(const QUrl& url) {
   const bool internal = isBootstrapLoad(url);
   resetInitialHistory();
+  // The new document reports its own focus; the old one may not have blurred.
+  setEditableFocused(false);
   // After the history bookkeeping, so that a handler may navigate right away.
   if (!internal)
     Q_EMIT loadStarted(url);
@@ -1008,9 +1058,9 @@ void CefWebView::cefFullscreen(bool fullscreen) {
 }
 
 void CefWebView::cefTextInputMode(bool editable) {
-  if (editable == m_editableFocused)
+  if (editable == m_imeEnabled)
     return;
-  m_editableFocused = editable;
+  m_imeEnabled = editable;
   setFlag(ItemAcceptsInputMethod, editable);
   if (hasActiveFocus())
     QGuiApplication::inputMethod()->update(Qt::ImEnabled | Qt::ImHints);
@@ -1031,7 +1081,7 @@ QPoint CefWebView::toBrowser(QPointF pos) const {
   return p;
 }
 
-void CefWebView::sendMouseClick(QMouseEvent* event, bool up, int clickCount) {
+void CefWebView::forwardMouseButton(QMouseEvent* event, bool up, int clickCount) {
   auto h = host();
   if (!h)
     return;
@@ -1066,18 +1116,18 @@ void CefWebView::mousePressEvent(QMouseEvent* event) {
   if (!hasActiveFocus())
     forceActiveFocus(Qt::MouseFocusReason);
   m_clickCount = 1;
-  sendMouseClick(event, false, m_clickCount);
+  forwardMouseButton(event, false, m_clickCount);
   event->accept();
 }
 
 void CefWebView::mouseDoubleClickEvent(QMouseEvent* event) {
   m_clickCount = 2;
-  sendMouseClick(event, false, m_clickCount);
+  forwardMouseButton(event, false, m_clickCount);
   event->accept();
 }
 
 void CefWebView::mouseReleaseEvent(QMouseEvent* event) {
-  sendMouseClick(event, true, m_clickCount);
+  forwardMouseButton(event, true, m_clickCount);
   event->accept();
 }
 
@@ -1150,6 +1200,76 @@ void CefWebView::wheelEvent(QWheelEvent* event) {
 
 void CefWebView::paste() {
   pasteFromSystemClipboard();
+}
+
+void CefWebView::sendMouseMove(qreal x, qreal y, int modifiers) {
+  auto h = host();
+  if (!h)
+    return;
+  CefMouseEvent ev;
+  const QPoint p = toBrowser(QPointF(x, y));
+  ev.x = p.x();
+  ev.y = p.y();
+  ev.modifiers = cefModifiers(Qt::KeyboardModifiers(modifiers), Qt::NoButton);
+  h->SendMouseMoveEvent(ev, false);
+}
+
+void CefWebView::sendMouseClick(qreal x, qreal y, int button, int modifiers, int clickCount) {
+  auto h = host();
+  if (!h)
+    return;
+  CefBrowserHost::MouseButtonType type;
+  switch (button) {
+    case Qt::LeftButton: type = MBT_LEFT; break;
+    case Qt::MiddleButton: type = MBT_MIDDLE; break;
+    case Qt::RightButton: type = MBT_RIGHT; break;
+    default:
+      qCWarning(lcCef) << "sendMouseClick: unsupported button" << button;
+      return;
+  }
+  if (!hasActiveFocus())
+    forceActiveFocus(Qt::MouseFocusReason);
+  sendMouseMove(x, y, modifiers);
+  CefMouseEvent ev;
+  const QPoint p = toBrowser(QPointF(x, y));
+  ev.x = p.x();
+  ev.y = p.y();
+  const auto mods = Qt::KeyboardModifiers(modifiers);
+  for (int i = 1; i <= std::max(1, clickCount); ++i) {
+    ev.modifiers = cefModifiers(mods, Qt::MouseButton(button));
+    h->SendMouseClickEvent(ev, type, false, i);
+    h->SendMouseClickEvent(ev, type, true, i);
+  }
+}
+
+void CefWebView::sendMouseWheel(qreal x, qreal y, int deltaX, int deltaY, int modifiers,
+                                bool pixels) {
+  auto h = host();
+  if (!h)
+    return;
+  CefMouseEvent ev;
+  const QPoint p = toBrowser(QPointF(x, y));
+  ev.x = p.x();
+  ev.y = p.y();
+  ev.modifiers = cefModifiers(Qt::KeyboardModifiers(modifiers), Qt::NoButton);
+  if (pixels)
+    ev.modifiers |= EVENTFLAG_PRECISION_SCROLLING_DELTA;
+  h->SendMouseWheelEvent(ev, deltaX, deltaY);
+}
+
+void CefWebView::sendKey(int key, int modifiers, const QString& text) {
+  const auto mods = Qt::KeyboardModifiers(modifiers);
+  QString t = text;
+  if (t.isNull() && key >= Qt::Key_Space && key <= Qt::Key_AsciiTilde &&
+      !(mods & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier))) {
+    const QChar c(key);
+    t = (mods & Qt::ShiftModifier) ? QString(c.toUpper()) : QString(c.toLower());
+  }
+  // Through the same path as real key events (paste handling, char events).
+  QKeyEvent press(QEvent::KeyPress, key, mods, t);
+  keyPressEvent(&press);
+  QKeyEvent release(QEvent::KeyRelease, key, mods, t);
+  keyReleaseEvent(&release);
 }
 
 void CefWebView::keyPressEvent(QKeyEvent* event) {
@@ -1237,7 +1357,7 @@ void CefWebView::inputMethodEvent(QInputMethodEvent* event) {
 QVariant CefWebView::inputMethodQuery(Qt::InputMethodQuery query) const {
   switch (query) {
     case Qt::ImEnabled:
-      return m_editableFocused;
+      return m_imeEnabled;
     case Qt::ImCursorRectangle:
       return QRectF(m_imeBounds);
     case Qt::ImHints:
