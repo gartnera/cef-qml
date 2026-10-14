@@ -25,10 +25,15 @@ Item {
         menu.linkUrl = linkUrl
         menu.selectedText = selectedText
         menu.editable = editable
+        visible = true
+        // The entries were just rebuilt; Column only positions them (and
+        // updates the panel height) at the next polish. Lay out now so the
+        // placement below uses the new height and a click that arrives
+        // before the next frame hits the entry under it, not a stale one.
+        column.forceLayout()
         const p = view.mapToItem(menu, x, y)
         panel.x = Math.min(p.x, width - panel.width - 4)
         panel.y = Math.min(p.y, height - panel.height - 4)
-        visible = true
     }
     function close() { visible = false }
 

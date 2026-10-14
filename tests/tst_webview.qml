@@ -365,6 +365,10 @@ Item {
                 skip("needs a usable system clipboard (headless compositors have no seat focus)")
             view.loadHtml("<title>clip</title><input id=a value='from-page'><textarea id=b></textarea>")
             tryCompare(view, "title", "clip", 10000)
+            // The title arrives before the new document's first frame, and
+            // Chromium drops input sent to a document that has not painted
+            // yet: wait for two animation frames before typing.
+            evaluate(view, "new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))")
             view.forceActiveFocus()
             evaluate(view, "a.focus(); a.select(); 1")
             keyClick(Qt.Key_C, Qt.ControlModifier)

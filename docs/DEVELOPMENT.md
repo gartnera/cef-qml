@@ -141,11 +141,18 @@ signal kills the process the default way.
   mode on affected Qt. CEF is not involved: `CefShutdown` (post routine) runs
   at the top of `~QGuiApplication`, before the platform integration dies.
 - Wait for `loading == false`, not just the title, before `find()` in tests.
-- With `qml6-module-qtquick-dialogs` installed, `tst_browser`'s
-  `test_13_context_menu_open_link` and `test_21_clipboard_bridge` were seen
-  to fail intermittently (about half of the offscreen runs); without it they
-  pass reliably. CI does not install it. Not yet investigated
-  (`FileDialogHandler` creating Qt's dialogs is the likely difference).
+- Chromium drops input sent to a document that has not painted its first
+  frame yet, and `title`/`loadFinished` arrive before that frame. In tests,
+  wait for two animation frames (`evaluate("new Promise(r =>
+  requestAnimationFrame(() => requestAnimationFrame(() => r(1))))")`) after a
+  load before sending keys or clicks to the page. Such races hide until
+  something shifts the timing (here: importing `QtQuick.Dialogs`, or a loaded
+  machine).
+- Positioners (`Column`, `Row`) lay out at the next polish, not when their
+  children change. Code that reads their size or relies on the children's
+  positions right after changing the model (e.g. `ContextMenu.show`) must
+  call `forceLayout()` first; a test clicking before the next frame hits a
+  stale layout.
 - QML: a `Loader` property named `item` shadows `Loader.item`; ambiguous
   `Shortcut` sequences (the same keys bound twice) never fire.
 - XMLHttpRequest file writes in tests are asynchronous; wait for `DONE`.
