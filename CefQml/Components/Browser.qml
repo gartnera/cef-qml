@@ -22,9 +22,32 @@ FocusScope {
     readonly property string title: currentView ? (currentView.title || "New Tab") : ""
     property string searchUrl: "https://duckduckgo.com/?q=%s"
     property url homeUrl: newTabUrl
-    // Tabs opened on start-up; empty opens one home tab.
+    // Tabs opened on start-up, after the restored session if any (the first
+    // one is selected). With neither, one home tab opens.
     property var initialUrls: []
+    // Open the start-up tabs (session, initialUrls or home) when complete.
     property bool openInitialTabs: true
+    // Open tabs and recently closed tabs, saved to Cef.dataDir/<sessionName>.json
+    // (SessionStore). Give each Browser of a process its own sessionName.
+    // Set sessionStore to null to keep no session.
+    property string sessionName: "session"
+    property SessionStore sessionStore: SessionStore {
+        id: defaultSession
+        // Inert once replaced (e.g. createObject(..., { sessionStore: null })).
+        readonly property bool active: browser.sessionStore === defaultSession
+        name: active ? browser.sessionName : ""
+        tabs: active ? webTabs : null
+        controller: active ? ctl : null
+        internalTabUrl: browser.newTabUrl
+    }
+    // When to reopen the saved session on start-up: "always", "never" or
+    // "ifCrashed" (the previous run did not exit cleanly). Background tabs
+    // restore discarded (sessionStore.lazy). The "session.restore" action
+    // reopens the previous session later.
+    property string restoreSession: "ifCrashed"
+    // True if the start-up tabs came from the saved session.
+    readonly property bool sessionRestored: _sessionRestored
+    property bool _sessionRestored: false
     // Open a fresh tab when the last one is closed (otherwise emit lastTabClosed).
     property bool keepOneTab: true
     property alias tabStrip: tabStrip
@@ -52,7 +75,7 @@ FocusScope {
     // between several Browser windows.
     property QtObject historyStore: HistoryStore {
         path: "history.json"
-        ignoreUrl: u => browser.isNewTabUrl(u)
+        ignoreUrl: u => !!browser && browser.isNewTabUrl(u)
     }
     // The address bar's drop-down (AddressSuggestions): add your own
     // sources with addressSuggestions.addProvider(...).
@@ -74,6 +97,10 @@ FocusScope {
     // "bookmarks.manage", Ctrl+Shift+O) and whether it is shown.
     property alias bookmarkManager: bmManager
     readonly property bool bookmarkManagerVisible: bookmarkOverlay.visible
+    // The tab strip's right-click menu and the recently closed tabs menu
+    // (RecentlyClosedMenu; action "tab.recentlyClosed").
+    property alias tabMenu: tabMenu
+    property alias recentlyClosedMenu: closedMenu
 
     signal lastTabClosed()
 
@@ -129,6 +156,36 @@ FocusScope {
     }
     // A home-page tab with the address field focused (the "tab.new" action).
     function newTab() { acts.trigger("tab.new") }
+    // Shows the menu for tab `index` at point (x, y) of `item` (the tab
+    // strip's right click).
+    function showTabMenu(index, item, x, y) {
+        const v = webTabs.views[index]
+        if (!v) return false
+        const hint = name => keys.hint(name)
+        const closed = ctl.closedTabs.length
+        tabMenu.entries = [
+            { label: "New tab", hint: hint("tab.new"), action: () => browser.newTab() },
+            null,
+            { label: "Reload", action: () => ctl.reload(v) },
+            { label: "Duplicate", action: () => ctl.duplicateTab(v) },
+            { label: v.audioMuted ? "Unmute tab" : "Mute tab", action: () => v.audioMuted = !v.audioMuted },
+            { label: "Discard tab", enabled: index !== webTabs.currentIndex && !v.discarded,
+              action: () => ctl.discardTab(v) },
+            null,
+            { label: "Close tab", hint: index === webTabs.currentIndex ? hint("tab.close") : "",
+              action: () => ctl.closeTab(v) },
+            { label: "Close other tabs", enabled: webTabs.count > 1,
+              action: () => webTabs.views.filter(t => t !== v).forEach(t => ctl.closeTab(t)) },
+            { label: "Close tabs to the right", enabled: index < webTabs.count - 1,
+              action: () => webTabs.views.slice(index + 1).reverse().forEach(t => ctl.closeTab(t)) },
+            null,
+            { label: "Reopen closed tab", hint: hint("tab.reopenClosed"), enabled: closed > 0,
+              action: () => ctl.reopenClosedTab() },
+            { label: "Recently closed tabs…", enabled: closed > 0,
+              action: () => closedMenu.popup(item, x, y) },
+        ]
+        return tabMenu.popup(item, x, y)
+    }
 
     readonly property string newTabUrl: "data:text/html;charset=utf-8," + encodeURIComponent(newTabHtml)
     property string newTabHtml: `<!doctype html><html><head><title>New Tab</title><meta charset="utf-8"><meta name="cefqml-newtab">
@@ -178,6 +235,7 @@ FocusScope {
         anchors.right: parent.right
         tabs: webTabs
         onNewTabRequested: browser.newTab()
+        onContextMenuRequested: (index, x, y) => browser.showTabMenu(index, tabStrip, x, y)
     }
 
     NavigationBar {
@@ -351,10 +409,23 @@ FocusScope {
         source: Qt.resolvedUrl("FileDialogHandler.qml")
     }
 
+    PopupMenu {
+        id: tabMenu
+        objectName: "tabMenu"
+    }
+    RecentlyClosedMenu {
+        id: closedMenu
+        objectName: "recentlyClosedMenu"
+        controller: ctl
+    }
+
     Component.onCompleted: {
         if (!openInitialTabs) return
-        if (initialUrls.length > 0) webTabs.restore(initialUrls, 0)
-        else webTabs.openTab(homeUrl)
+        const s = sessionStore
+        if (s && s.enabled && (restoreSession === "always" || (restoreSession === "ifCrashed" && s.crashed)))
+            _sessionRestored = s.restore({ replace: true }).length > 0
+        if (initialUrls.length > 0) webTabs.restore(initialUrls, 0, { append: webTabs.count > 0 })
+        else if (webTabs.count === 0) webTabs.openTab(homeUrl)
     }
 
     BrowserController {
@@ -377,6 +448,8 @@ FocusScope {
         bookmarkManager: browser.bookmarkStore ? bookmarkOverlay : null
         bookmarksBarTarget: browser.bookmarkStore ? browser : null
         bookmarksBarProperty: "showBookmarksBar"
+        recentlyClosedMenu: closedMenu
+        sessionStore: browser.sessionStore
     }
 
     // Install prompt for *.user.js pages loaded in the current tab.

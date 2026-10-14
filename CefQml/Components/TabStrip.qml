@@ -2,13 +2,15 @@ import QtQuick
 import CefQml
 
 // Horizontal tab bar for a WebTabs. Click selects, middle click or × closes,
-// + opens a new tab.
+// + opens a new tab, right click emits contextMenuRequested(index, x, y)
+// (strip coordinates; Browser shows a tab menu). Discarded tabs are dimmed.
 Rectangle {
     id: strip
     required property WebTabs tabs
     property real maxTabWidth: 220
     property real minTabWidth: 48
     signal newTabRequested()
+    signal contextMenuRequested(int index, real x, real y)
 
     implicitHeight: Style.barHeight
     color: Style.background
@@ -63,6 +65,7 @@ Rectangle {
                     sourceSize: Qt.size(32, 32)
                     source: tab.view && tab.view.icon.toString().startsWith("http") ? tab.view.icon : ""
                     visible: status === Image.Ready && !(tab.view && tab.view.loading)
+                    opacity: tab.view && tab.view.discarded ? 0.5 : 1
                 }
                 Rectangle {
                     // loading indicator / placeholder dot
@@ -86,6 +89,7 @@ Rectangle {
                     text: !tab.view ? "" : tab.view.title || tab.view.url.toString() || "New Tab"
                     elide: Text.ElideRight
                     color: tab.current ? Style.text : Style.textDim
+                    opacity: tab.view && tab.view.discarded ? 0.7 : 1
                     font.pixelSize: Style.fontSize
                     font.family: Style.fontFamily
                 }
@@ -93,10 +97,16 @@ Rectangle {
                     id: tabMouse
                     anchors.fill: parent
                     hoverEnabled: true
-                    acceptedButtons: Qt.LeftButton | Qt.MiddleButton
+                    acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
                     onClicked: mouse => {
-                        if (mouse.button === Qt.MiddleButton) strip.tabs.closeTab(tab.index)
-                        else strip.tabs.currentIndex = tab.index
+                        if (mouse.button === Qt.MiddleButton) {
+                            strip.tabs.closeTab(tab.index)
+                        } else if (mouse.button === Qt.RightButton) {
+                            const p = tab.mapToItem(strip, mouse.x, mouse.y)
+                            strip.contextMenuRequested(tab.index, p.x, p.y)
+                        } else {
+                            strip.tabs.currentIndex = tab.index
+                        }
                     }
                 }
                 IconButton {

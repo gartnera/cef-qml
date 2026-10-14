@@ -7,13 +7,19 @@ import CefQml.Components
 Item {
     id: app
     property alias browser: browser
+    // Opened next to the restored session (command line URLs).
     property var initialUrls: []
 
     Browser {
         id: browser
         anchors.fill: parent
         focus: true
-        openInitialTabs: false
+        // Reopen the last session's tabs (Cef.dataDir/session.json); under
+        // HotReload (dev.qml) this also keeps the tabs across reloads: the
+        // old UI saves the session when it is destroyed, before the new one
+        // is created. Command line URLs only open on the first load.
+        restoreSession: "always"
+        initialUrls: app.hot && app.hot.generation > 0 ? [] : app.initialUrls
 
         // Key bindings: { actionName: [keys] } replaces an action's default
         // keys; [] unbinds it (see "Actions, key bindings and scripting" in
@@ -41,20 +47,18 @@ Item {
         // }
     }
 
-    // Under HotReload (dev.qml), keep the open tabs across reloads.
     readonly property var hot: typeof hotReload !== "undefined" ? hotReload : null
+    // Without a session file of our own (another process holds the profile,
+    // see Cef.temporaryProfile), carry the tabs across reloads in memory.
     Connections {
         target: app.hot
-        function onAboutToReload() {
-            app.hot.state = { urls: browser.tabs.urls(), current: browser.tabs.currentIndex }
-        }
+        function onAboutToReload() { app.hot.state = { session: browser.sessionStore.snapshot() } }
     }
 
     Component.onCompleted: {
-        const saved = hot && hot.state.urls ? hot.state : null
-        if (saved && saved.urls.length > 0) browser.tabs.restore(saved.urls, saved.current)
-        else if (initialUrls.length > 0) browser.tabs.restore(initialUrls, 0)
-        else browser.tabs.openTab(browser.homeUrl)
+        const s = browser.sessionStore
+        if (hot && hot.state.session && !s.enabled)
+            s.restore({ session: hot.state.session, replace: true })
         browser.forceActiveFocus()
     }
 }

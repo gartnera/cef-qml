@@ -17,7 +17,10 @@ import CefQml
 // a `bookmarkButton`, whose toggle() also shows its editor), bookmarks.manage
 // a `bookmarkManager` (toggle(), visible) and bookmarks.showBar a
 // `bookmarksBarTarget` whose boolean `bookmarksBarProperty` (default
-// "visible") it flips. Declare more BrowserActions inside, or replace one
+// "visible") it flips. tab.recentlyClosed needs a `recentlyClosedMenu`
+// (popup(item, x, y), e.g. a RecentlyClosedMenu) and session.restore a
+// `sessionStore` (a SessionStore with a saved session). Declare more
+// BrowserActions inside, or replace one
 // by adding an action with the same name.
 ActionRegistry {
     id: acts
@@ -33,6 +36,8 @@ ActionRegistry {
     property var bookmarkManager: null
     property var bookmarksBarTarget: null
     property string bookmarksBarProperty: "visible"
+    property var recentlyClosedMenu: null
+    property var sessionStore: null
 
     readonly property CefWebView view: controller ? controller.currentView : null
     readonly property bool hasView: view !== null
@@ -90,6 +95,27 @@ ActionRegistry {
         defaultShortcuts: ["Ctrl+Shift+T"]
         enabled: acts.controller !== null && acts.controller.closedTabs.length > 0
         onTriggered: acts.controller.reopenClosedTab()
+    }
+    BrowserAction {
+        name: "tab.recentlyClosed"; text: "Recently closed tabs"
+        description: "Show the recently closed tabs menu (args: { item, x, y }: where; default: the window's top left)."
+        enabled: acts.recentlyClosedMenu !== null
+        onTriggered: args => acts.recentlyClosedMenu.popup(args.item || null, args.x || 8, args.y || 8)
+    }
+    BrowserAction {
+        name: "tab.discardOthers"; text: "Discard background tabs"
+        description: "Free the memory of every tab but the current one; they load again when selected."
+        enabled: acts.controller !== null && acts.controller.count > 1
+        onTriggered: {
+            const c = acts.controller
+            for (let i = 0; i < c.count; ++i) c.discardTab(i)
+        }
+    }
+    BrowserAction {
+        name: "session.restore"; text: "Restore previous session"
+        description: "Reopen the tabs of the previous session next to the current ones."
+        enabled: acts.sessionStore !== null && acts.sessionStore.hasSavedSession
+        onTriggered: acts.sessionStore.restore()
     }
 
     // nav.*
