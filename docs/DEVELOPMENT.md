@@ -81,7 +81,19 @@ QML_IMPORT_PATH=build qml examples/browser/main.qml
   (`CEF_QML_TEST_DIR`, for downloads and the files `tst_hotreload` writes);
   nothing is written into `<builddir>`, so `tests/run.sh` also runs against
   an installed or extracted `qml/` dir.
-- Tests use `data:` URLs or `loadHtml` — no network.
+- Tests use `data:` URLs, `loadHtml` or the local HTTP server `run.sh`
+  starts (`tests/http_server.py`, `TEST_HTTP_ORIGIN=http://127.0.0.1:<port>`;
+  `localhost:<port>` is a second origin on it; `?html=<markup>` serves the
+  markup) — no network. Per-origin features (site settings, permissions,
+  `Storage.clearDataForOrigin`) need it: `data:` URLs have opaque origins.
+- `run.sh` adds `--use-fake-device-for-media-stream` to `CEF_QML_FLAGS` so
+  `getUserMedia` has devices and reaches `OnRequestMediaAccessPermission`.
+  Never add `--use-fake-ui-for-media-stream`: it grants every media request
+  inside Chromium before CefQml sees it, which would make the permission
+  tests pass for the wrong reason.
+- The profile is shared by all suites of a run: a suite that changes
+  Chromium state (content settings, cookies, zoom of a host) must undo it in
+  `cleanup()` (e.g. `SiteSettings.clear()` resets every exception it pushed).
 - `meson test -C build cdp-remote` runs `tests/cdp_remote.py build`: it starts
   the reference browser, drives it over the remote-debugging port and checks
   the clean SIGTERM exit (stdlib-only Python; skips with 77 without a `qml`
@@ -419,6 +431,44 @@ signal kills the process the default way.
     cancels the old index against the new, smaller count). `HistoryView` and
     `BookmarkManager` use `cacheBuffer: 0`, which creates no delegates
     asynchronously.
+- Site settings / content settings:
+  - Content settings set through `CefRequestContext::SetContentSetting`
+    persist in the Chromium profile, independently of `site-settings.json`.
+    `SiteSettings` remembers every origin it applied and writes `"default"`
+    for it when a value goes away (`clear()`, `reset()`, `reload()`), and
+    pushes the `*` defaults on load, so a stale exception cannot outlive the
+    store.
+  - Touching the MIDI content setting type (`CEF_CONTENT_SETTING_TYPE_MIDI`,
+    get or set) hits a `CHECK` in Chromium 154 and kills the browser
+    process; it is not in `contentSettingTypes`. `midi-sysex` works.
+  - The settings must be in place before the request of the navigation
+    goes out: `CefWebView.navigationRequested` (from `OnBeforeBrowse`) is the
+    hook; `loadStarted` is too late for JavaScript and images.
+  - Chromium's zoom is per host (`HostZoomMap`), not per origin or tab: two
+    tabs on one host always show the same zoom, and a view re-applies its
+    own `zoomFactor` on load start only while it is visible and active.
+    `WebTabs` (zoomPolicy "origin") sets the stored zoom from `loadStarted`.
+  - Off-screen Chromium has no permission prompt UI of its own: CefQml
+    answers prompts (`OnShowPermissionPrompt`, `OnRequestMediaAccessPermission`)
+    through `permissionRequested`. `navigator.permissions.query()` does not
+    ask CefQml, it reads the content setting, so a remembered "allow" /
+    "block" is only visible to the page ("granted" / "denied" instead of
+    "prompt") because `SiteSettings.apply()` pushed it before the load.
+    Media requests (`getUserMedia`) need `--use-fake-device-for-media-stream`
+    to get as far as `OnRequestMediaAccessPermission`.
+- QML TestCase:
+  - A function whose name ends in `_data` is a data provider for the
+    test of the same name without it and is never run as a test
+    (`test_clear_site_data` silently disappears).
+  - The TestCases of one file do not necessarily run in file order: every
+    case must set up the state it needs (e.g. hide items another case
+    shows) and undo it in `cleanupTestCase()`.
+  - A `Browser` with `keepOneTab` opens a new tab whenever the last one
+    closes, so `tabs.closeAll()` never ends: destroy the browser (a
+    `Loader` going inactive) instead.
+  - Items in a `Flow`/`Row` laid out after a property change are not
+    placed until the next polish: `waitForItemPolished(flow)` before
+    `mouseClick()` on them.
 - `destroy()` is deferred: a test that checks a `JsonStore` flush on
   destruction must wait (`tryVerify`) for it.
 - C string hex escapes are greedy: write `"\x01" "cefqml:..."`, not

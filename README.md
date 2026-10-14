@@ -252,6 +252,8 @@ page while user scripts are registered, then loads `url`.
 | `discarded` | bool | read/write | `true` frees the browser (memory, processes) but keeps `url`, `title`, `icon`, `zoomFactor`, `audioMuted` and `userScripts`; `false` (or `reload()`) creates it again and loads `url`. Declared `true`, no browser is created until it turns `false`. Back/forward history and page state are lost; pending `devToolsMethod`/`evaluateJavaScript` calls are dropped, so re-run setup on `discardedChanged()`. |
 | `frameCount` | int | read-only | Frames received so far (notifies through `frameSwapped`). |
 | `userScripts` | list&lt;string&gt; | read/write | JavaScript sources run in every new document before the page's own scripts (`Page.addScriptToEvaluateOnNewDocument`). |
+| `secure` | bool | read-only | Connection security of the current page: `true` for https (or wss) with a valid certificate and no mixed content. Updated as the page loads (`securityChanged()`). |
+| `certificate` | object | read-only | Certificate summary of the current page, `{}` for non-TLS pages: `{ subject, issuer, organization, validFrom, validTo (Date), errors (["date-invalid", "authority-invalid", ...]), mixedContent (bool), protocol ("TLS 1.3") }`. |
 | `editableFocused` | bool | read-only | The focused element of the page takes typed text: an enabled text `<input>`, `<textarea>` or `<select>`, a `contenteditable` element or a `designMode` document (in the main frame or a same-process iframe). Tracked by focus events in the page: it is false while the view itself does not have the keyboard focus. Use it to give single-key bindings to the page only while the user is not typing (see [Link hints and keyboard browsing](#link-hints-and-keyboard-browsing)). |
 
 Enum `CefWebView.ConsoleLevel`: `Debug`, `Info`, `Warning`, `Error`.
@@ -276,7 +278,8 @@ Enum `CefWebView.ConsoleLevel`: `Debug`, `Info`, `Warning`, `Error`.
 
 | Signal | Description |
 |---|---|
-| `urlChanged()`, `titleChanged()`, `iconChanged()`, `loadingChanged()`, `loadProgressChanged()`, `navigationStateChanged()` (`canGoBack`/`canGoForward`), `hoveredUrlChanged()`, `tooltipChanged()`, `zoomFactorChanged()`, `audioMutedChanged()`, `fullscreenChanged()`, `backgroundColorChanged()`, `frameRateChanged()`, `activeChanged()`, `readyChanged()`, `userScriptsChanged()`, `discardedChanged()`, `editableFocusedChanged()` | Property notifications. |
+| `urlChanged()`, `titleChanged()`, `iconChanged()`, `loadingChanged()`, `loadProgressChanged()`, `navigationStateChanged()` (`canGoBack`/`canGoForward`), `hoveredUrlChanged()`, `tooltipChanged()`, `zoomFactorChanged()`, `audioMutedChanged()`, `fullscreenChanged()`, `backgroundColorChanged()`, `frameRateChanged()`, `activeChanged()`, `readyChanged()`, `userScriptsChanged()`, `discardedChanged()`, `editableFocusedChanged()`, `securityChanged()` (`secure`/`certificate`) | Property notifications. |
+| `navigationRequested(url url, bool userGesture, bool isRedirect)` | Emitted synchronously before a main-frame navigation sends its request (also for each redirect and for loads started by the host), so a handler can prepare per-site state, e.g. `Cef.setContentSetting()` for the target (`WebTabs` calls `SiteSettings.apply()` here). Not emitted for same-document navigations. |
 | `frameSwapped()` | A new frame was rendered. |
 | `loadStarted(url url)` | A main-frame load (a new document) started. Not emitted for same-document navigations (`#fragment`, `history.pushState`). |
 | `loadFinished(url url, int httpStatusCode)` | Main frame finished loading. Chromium's error page for a failed load emits it too (after `loadFailed`). |
@@ -359,6 +362,9 @@ Downloads outlive the view that started them; all of them are listed in
 | `urlFromUserInput(string text)` | What an address bar does with typed text: `"example.com"` → `https://example.com`, `"/tmp/x.html"` → file URL, `"localhost:8080"` → `http://localhost:8080`. Returns an invalid (empty) URL for text that is not an address (e.g. a search query). |
 | `copyToClipboard(string text)` | |
 | `environment(string name)` | Value of an environment variable (`""` if unset). |
+| `bool setContentSetting(url url, string type, string value)` | Chromium's own content settings (profile-wide, persisted by Chromium in the profile): sets the exception for the origin of `url`, or the default when `url` is empty. `type` is one of `contentSettingTypes` (`"javascript"`, `"images"`, `"popups"`, `"notifications"`, `"geolocation"`, `"camera"`, `"microphone"`, ...); `value` is `"allow"`, `"block"`, `"ask"`, `"session-only"` (cookies) or `"default"` (removes the exception). JavaScript and images apply to documents loaded afterwards. `false` for an unknown type or value. Most apps use `SiteSettings` instead. |
+| `string contentSetting(url url, string type)` | The effective value for `url` (`"allow"`, `"block"`, `"ask"`, ...). |
+| `contentSettingTypes` | The type names accepted above. |
 
 ### `JsonStore`
 
@@ -524,6 +530,81 @@ every change. The file is still plain JSON (`{ "version": 1, "roots": [...]
 }`), written atomically and debounced like `JsonStore`'s. Use one store per
 file: several `Browser` windows should share one `bookmarkStore`.
 
+### `SiteSettings` and `SiteSettingsModel`
+
+Per-site settings: a value per key for each site scope, persisted as JSON
+under `Cef.dataDir` (`site-settings.json`; `{ "version": 1, "sites": {
+scope: { key: value } } }`). `WebTabs` enforces them in every tab
+(`siteSettings`), and `Browser` creates one by default
+(`browser.siteSettings`). See [Site settings](#site-settings) for the UI.
+
+```qml
+SiteSettings { id: sites }                              // Cef.dataDir/site-settings.json
+WebTabs { id: tabs; siteSettings: sites }                // enforces them in every tab
+
+sites.set("https://example.com", "camera", "allow")     // an origin
+sites.set("[*.]example.org", "javascript", "block")      // a domain and its subdomains
+sites.set("*", "zoom", 1.25)                             // the default for every site
+sites.effective("https://a.example.org/x", "javascript") // "block"
+sites.scopeFor("https://a.example.org/x", "javascript")  // "[*.]example.org"
+sites.reset("https://example.com")                       // forget the site
+```
+
+**Scopes**, most specific first; a lookup goes through them per key, so an
+origin that only stores `zoom` still gets `javascript` from a matching
+pattern:
+
+| Scope | Matches |
+|---|---|
+| `"https://example.com:8443"` | That origin (scheme, host, port). Any URL passed as a scope is reduced to its origin; default ports are dropped. |
+| `"example.com"` | That host, any scheme and port. |
+| `"[*.]example.com"` | The host and all its subdomains; the longest matching domain wins. |
+| `"*"` | Every site (the default). |
+
+**Keys**; other keys may hold any JSON value (your app's own per-site
+settings), they are stored and looked up the same way:
+
+| Key | Values | Built-in default | Enforced by `WebTabs` through |
+|---|---|---|---|
+| `zoom` | 0.25..5 | 1 | the views' `zoomFactor` (`zoomPolicy: "origin"`) |
+| `javascript`, `images` | `"allow"`, `"block"` | `"allow"` | Chromium content settings, from the next document |
+| `popups` | `"allow"`, `"block"` (pop-ups without a user gesture) | `"block"` | Chromium's pop-up blocker |
+| permission names, as in `CefPermissionRequest.permissions` (`camera`, `microphone`, `geolocation`, `notifications`, `clipboard`, `midi-sysex`, ...) | `"allow"`, `"block"`, `"ask"` | `"ask"` | answering `permissionRequested` before it reaches you, and Chromium content settings (for `navigator.permissions.query()`) |
+
+| Member | Description |
+|---|---|
+| `path` | File to use (default `"site-settings.json"`). Relative paths resolve under `Cef.dataDir`; `""` keeps the settings in memory. |
+| `filePath`, `loaded`, `count`, `errorString` | Read-only. |
+| `revision` | Incremented on every change; mention it in a binding to re-evaluate lookups (`sites.revision, sites.effective(url, "camera")`). |
+| `contentSettings` | Push `javascript`, `images`, `popups` and permission decisions into Chromium's content settings (default `true`). `false`: the store only answers lookups; `WebTabs` still answers permission requests and restores zoom. |
+| `saveDelay` | Debounce of the automatic save in ms (default 500). Pending changes are written when the store is destroyed and when the application quits. |
+| `get(scope, key)` | The value stored for exactly this scope, or `undefined`. |
+| `settings(scope)` | All values of a scope as an object (`{}` if none). |
+| `bool set(scope, key, value)` | Stores a value; `undefined` or `null` removes it. `false` (and a warning) for an invalid scope or a value a built-in key does not accept. |
+| `bool reset(scope, key)` | Removes one key of a scope, or the whole scope without `key`. |
+| `clear()` | Removes everything. |
+| `origins()`, `contains(scope)`, `get(row)` | Scopes with settings (model order); `get(row)` is `{ scope, name, kind, settings, keys }`. |
+| `effective(url, key)` | The value that applies to `url`: from the most specific scope that has the key, else the built-in default. |
+| `scopeFor(url, key)` | The scope that decides (`""`: the built-in default). |
+| `defaultValue(key)`, `isPermission(key)` | |
+| `decide(url, permissions)` | For a permission request: `"block"` if any permission is blocked, `"allow"` if all are allowed, else `"ask"`. |
+| `originOf(url)`, `normalizeScope(scope)` | `"scheme://host[:port]"` of a URL (`""` for `data:`, `about:`, ...; `"file://"` for files); the canonical form of a scope (`""` if it is none). |
+| `apply(url)` | Writes the content settings for the origin of `url` into Chromium. `WebTabs` calls it from `navigationRequested`, before the page loads; later changes are pushed again for every origin applied. |
+| `save()`, `reload()` | |
+| signals `changed(scope, key)` (`key` `""`: a whole scope was reset; `scope` `""`: everything changed), `saved()` | |
+
+The store is a list model of its scopes, sorted by host with `"*"` first:
+roles `scope`, `name` (the host, for display), `kind` (`"origin"`,
+`"host"`, `"pattern"` or `"default"`), `settings` and `keys`.
+`SiteSettingsModel { store: sites; filterText: search.text }` filters it by
+scope and key names (`count`, `get(row)`).
+
+Why C++ and not a `JsonStore`: lookups (pattern matching) run synchronously
+for every navigation and permission request, and enforcement writes
+Chromium's content settings through `CefRequestContext`, which is only
+reachable from C++. Like the other stores, use one `SiteSettings` per file:
+several `Browser` windows should share one `siteSettings`.
+
 ### `HotReload` (Item)
 
 Loads a QML file and reloads it whenever QML/JS files under its directory (or
@@ -555,29 +636,31 @@ through `Style`, or copy one as the starting point for your own.
 
 | Component | Purpose and key API |
 |---|---|
-| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts), `userScriptManager` (the `UserScriptManager` overlay), `userScriptManagerVisible`, `offerUserScriptInstall` (default true), `historyStore` (a `HistoryStore` on `history.json`; null disables history), `addressSuggestions` (the address bar's `AddressSuggestions`), `historyView` (the `HistoryView` overlay), `historyVisible`, `bookmarkStore` (a `BookmarkStore` on `bookmarks.json`; null disables bookmarks), `showBookmarksBar`, `bookmarksBar`, `bookmarkManager` (the `BookmarkManager` overlay), `bookmarkManagerVisible`, `sessionStore` (a `SessionStore` on `<sessionName>.json`; null keeps no session), `sessionName` (default `"session"`; one per `Browser` of a process), `restoreSession` (`"always"`, `"never"` or `"ifCrashed"`, the default), `sessionRestored`, `tabMenu` (the tab strip's right-click menu), `recentlyClosedMenu` (a `RecentlyClosedMenu`), `commandPalette` (a `CommandPalette`), `commandPaletteVisible`, `linkHints` (a `LinkHints` over the current tab). See [Sessions](#sessions), [Command palette](#command-palette) and [Link hints](#link-hints-and-keyboard-browsing). Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`, `showUserScripts()`, `hideUserScripts()`, `showHistory()`, `hideHistory()`, `showBookmarks()`, `hideBookmarks()`, `showCommandPalette(prefix)`, `hideCommandPalette()`, `openBookmark(url, newTab)`, `showTabMenu(index, item, x, y)`, `reviewUserScript(url)`, `isUserScriptUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
+| `Browser` | Complete tabbed browser: `TabStrip`, `NavigationBar`, `FindBar`, `WebTabs`, `StatusBubble`, `RequestOverlay`, `DownloadsBar`, `ContextMenu`, file dialogs and the standard actions with their keys (see [Actions, key bindings and scripting](#actions-key-bindings-and-scripting)). Properties: `tabs` (the `WebTabs`), `currentView`, `title`, `initialUrls`, `openInitialTabs`, `homeUrl` (default: built-in new-tab page, `newTabHtml`), `searchUrl`, `keepOneTab`, `tabStrip`, `navigationBar`, `findBar`, `controller` (`BrowserController`), `actions` (`BrowserActions`), `keyBindings` (`KeyBindings`), `bindings` (user key bindings), `userScriptStore` (a `UserScriptStore`; null disables userscripts), `userScriptManager` (the `UserScriptManager` overlay), `userScriptManagerVisible`, `offerUserScriptInstall` (default true), `historyStore` (a `HistoryStore` on `history.json`; null disables history), `addressSuggestions` (the address bar's `AddressSuggestions`), `historyView` (the `HistoryView` overlay), `historyVisible`, `bookmarkStore` (a `BookmarkStore` on `bookmarks.json`; null disables bookmarks), `showBookmarksBar`, `bookmarksBar`, `bookmarkManager` (the `BookmarkManager` overlay), `bookmarkManagerVisible`, `siteSettings` (a `SiteSettings` on `site-settings.json`; null disables per-site settings), `siteSettingsManager` (the `SiteSettingsManager` overlay), `siteSettingsVisible`, `sessionStore` (a `SessionStore` on `<sessionName>.json`; null keeps no session), `sessionName` (default `"session"`; one per `Browser` of a process), `restoreSession` (`"always"`, `"never"` or `"ifCrashed"`, the default), `sessionRestored`, `tabMenu` (the tab strip's right-click menu), `recentlyClosedMenu` (a `RecentlyClosedMenu`), `commandPalette` (a `CommandPalette`), `commandPaletteVisible`, `linkHints` (a `LinkHints` over the current tab). See [Sessions](#sessions), [Site settings](#site-settings), [Command palette](#command-palette) and [Link hints](#link-hints-and-keyboard-browsing). Functions: `navigate(target, opts, callback)`, `openTab(url, opts, callback)`, `closeTab(tab)`, `selectTab(tab)`, `back(tab)`, `forward(tab)`, `reload(tab, ignoreCache)`, `stop(tab)`, `findTab(predicate)`, `tabForUrl(url)`, `whenLoaded(view, callback, opts)` (all forwarded to `controller`), `trigger(name, args)`, `open(url, newTab)` (typed text becomes a URL or a search), `newTab()`, `isNewTabUrl(url)`, `showUserScripts()`, `hideUserScripts()`, `showHistory()`, `hideHistory()`, `showBookmarks()`, `hideBookmarks()`, `showCommandPalette(prefix)`, `hideCommandPalette()`, `showSiteInfo()`, `hideSiteInfo()`, `showSiteSettings()`, `hideSiteSettings()`, `openBookmark(url, newTab)`, `showTabMenu(index, item, x, y)`, `reviewUserScript(url)`, `isUserScriptUrl(url)`. Signal: `lastTabClosed()` (when `keepOneTab` is false). |
 | `BrowserController` | Non-visual programmatic API over a `WebTabs` (`tabs`): navigation that reports its result, tab helpers, zoom, recently closed tabs. See below. |
 | `BrowserAction` | A named command: `name` (`"tab.new"`), `text`, `description`, `category`, `enabled`, `checkable`/`checked`, `defaultShortcuts`, `showInPalette` (default true; false for actions that need arguments), signal `triggered(args)`, `trigger(args)`. |
 | `ActionRegistry` | A set of `BrowserAction`s looked up and run by name: `model` (for menus or a command palette), `count`, `action(name)`, `has(name)`, `names()`, `trigger(name, args)`, `add(action or { name, text, defaultShortcuts, onTriggered })`, `remove(nameOrAction)`, signal `actionTriggered(name, args)`. |
-| `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar`, `window`, `userScriptManager`, `historyView` and `bookmarkManager` (anything with `toggle()` and `visible`, e.g. a `PanelOverlay`), `bookmarkStore`, `bookmarkButton` and `bookmarksBarTarget` / `bookmarksBarProperty` (the object and boolean property `bookmarks.showBar` toggles; default property `"visible"`), `recentlyClosedMenu`, `sessionStore`, `commandPalette` and `linkHints` they act on. |
+| `BrowserActions` | The standard browser actions (an `ActionRegistry`) for a `controller`, plus the optional `addressField`, `findBar`, `window`, `userScriptManager`, `historyView` and `bookmarkManager` (anything with `toggle()` and `visible`, e.g. a `PanelOverlay`), `bookmarkStore`, `bookmarkButton` and `bookmarksBarTarget` / `bookmarksBarProperty` (the object and boolean property `bookmarks.showBar` toggles; default property `"visible"`), `recentlyClosedMenu`, `sessionStore`, `commandPalette`, `linkHints`, `siteInfo` (a `SiteInfo`) and `siteSettingsManager` (`toggle()`, `visible`) they act on. |
 | `KeyBindings` | Window-wide keyboard shortcuts for an `ActionRegistry` (`actions`): defaults from the actions, `bindings` overrides, conflict resolution, modes. See below. |
 | `UserScriptStore` | Installed userscripts and their GM values, persisted under `Cef.dataDir`, injected into attached views. See [Userscripts](#userscripts). |
 | `UserScriptManager` | Manager UI for a `UserScriptStore` (`store`), with `view` for "running on this page". See [Managing scripts](#managing-scripts). |
 | `HistoryView` | Searchable history page for a `HistoryStore` (`store`), grouped by day. See [History page](#history-page). |
 | `BookmarkStore`, `BookmarkModel` | The bookmark tree and per-folder models (C++, `CefQml`). See [`BookmarkStore` and `BookmarkModel`](#bookmarkstore-and-bookmarkmodel). |
 | `BookmarkButton`, `BookmarksBar`, `BookmarkMenu`, `BookmarkEditor`, `BookmarkManager` | The star, the bookmarks bar, folder drop-downs, the edit card and the manager page. See [Bookmarks](#bookmarks). |
+| `SiteSettings`, `SiteSettingsModel` | Per-site permissions, zoom, JavaScript, images and pop-ups (C++, `CefQml`). See [`SiteSettings` and `SiteSettingsModel`](#sitesettings-and-sitesettingsmodel). |
+| `SiteInfo`, `SiteSettingsManager` | The site information card and the site settings page. See [Site settings](#site-settings). |
 | `PanelOverlay` | Modal panel host: dims the window, centres its content, closes on a backdrop click or Escape. See [History page](#history-page). |
-| `WebTabs` | Non-visual tab manager: one `CefWebView` per tab, stacked, only the current one visible. `views`, `count`, `currentIndex`, `currentView`, `homeUrl`, `viewDelegate` (a `Component` deriving from `CefWebView`), `openPopupsInNewTabs`, `closeOnRequest`, `userScriptStore` (a `UserScriptStore` injected into every tab), `historyStore` (a `HistoryStore` recording every tab's visits). `openTab(url, background, index, properties)` (`properties` are set on the new view, e.g. `{ discarded: true, title: "…" }`), `closeTab(index)`, `moveTab(from, to)`, `closeAll()`, `indexOf(view)`, `discard(index)` (frees a background tab's browser; it reloads when selected), `urls()`, `restore(entries, current, { lazy, append })` (entries are URLs or `{ url, title, icon, zoom, muted }`; `lazy` opens background tabs discarded; returns the new views). The current tab is never discarded. Signals `tabOpened`, `tabClosed(view, index)`, `lastTabClosed`, `sessionChanged`, `contextMenuRequested(view, ...)`; set `interceptJavaScriptDialogs` / `interceptPermissions` / `interceptFileDialogs` / `interceptDownloads` to receive every tab's requests as `javaScriptDialogRequested(view, dialog)`, `permissionRequested(view, request)`, `fileDialogRequested(view, request)`, `downloadRequested(view, download)`. |
+| `WebTabs` | Non-visual tab manager: one `CefWebView` per tab, stacked, only the current one visible. `views`, `count`, `currentIndex`, `currentView`, `homeUrl`, `viewDelegate` (a `Component` deriving from `CefWebView`), `openPopupsInNewTabs`, `closeOnRequest`, `userScriptStore` (a `UserScriptStore` injected into every tab), `historyStore` (a `HistoryStore` recording every tab's visits), `siteSettings` (a `SiteSettings` enforced in every tab) and `zoomPolicy` (`"origin"`, the default: zoom is remembered per site; `"tab"`: every tab keeps its own zoom; see [Site settings](#site-settings)). `openTab(url, background, index, properties)` (`properties` are set on the new view, e.g. `{ discarded: true, title: "…" }`), `closeTab(index)`, `moveTab(from, to)`, `closeAll()`, `indexOf(view)`, `discard(index)` (frees a background tab's browser; it reloads when selected), `urls()`, `restore(entries, current, { lazy, append })` (entries are URLs or `{ url, title, icon, zoom, muted }`; `lazy` opens background tabs discarded; returns the new views). The current tab is never discarded. Signals `tabOpened`, `tabClosed(view, index)`, `lastTabClosed`, `sessionChanged`, `contextMenuRequested(view, ...)`; set `interceptJavaScriptDialogs` / `interceptPermissions` / `interceptFileDialogs` / `interceptDownloads` to receive every tab's requests as `javaScriptDialogRequested(view, dialog)`, `permissionRequested(view, request)`, `fileDialogRequested(view, request)`, `downloadRequested(view, download)`. |
 | `TabStrip` | Horizontal tab bar for a `WebTabs` (`tabs`, required): click selects, middle click or × closes, + emits `newTabRequested()`, right click emits `contextMenuRequested(index, x, y)` (strip coordinates). Discarded tabs are dimmed. `maxTabWidth`, `minTabWidth`. |
 | `SessionStore` | Saves and restores a `WebTabs`' tabs and a `BrowserController`'s recently closed tabs. See [Sessions](#sessions). |
 | `RecentlyClosedMenu` | Menu of a `BrowserController`'s (`controller`) recently closed tabs; a click reopens one. See [Sessions](#sessions). |
-| `NavigationBar` | Back / forward / reload-stop, an `AddressField`, a bookmark star (when `bookmarkStore` is set) and a load-progress line for `view`. `addressField`, `searchUrl`, `bookmarkStore`, `bookmarkButton`; children are placed after the address field (e.g. a menu button). |
+| `NavigationBar` | Back / forward / reload-stop, a site info button (ⓘ: accent coloured on secure pages, ! on certificate errors; `showSiteInfo`), an `AddressField`, a bookmark star (when `bookmarkStore` is set) and a load-progress line for `view`. `addressField`, `searchUrl`, `bookmarkStore`, `bookmarkButton`, `siteSettings` (the `SiteSettings` its `siteInfo` card edits), `siteInfo` (a `SiteInfo`), `siteInfoButton`; children are placed after the address field (e.g. a menu button). |
 | `AddressField` | URL/search field bound to `view`: shows the page URL while not edited; Enter navigates, non-addresses are searched with `searchUrl` (`%s` = query); Escape restores the page URL, a second Escape (or one with nothing edited) returns focus to the page. `text`, `input`, `isInternalUrl` (urls shown as an empty field), `suggestions` (set by `AddressSuggestions`), `urlFor(text)`, `go(url)` (load in `view` and focus it; the same URL reloads), `focusAndSelect()`, signal `navigated(url)`. |
 | `AddressSuggestions` | Drop-down and inline autocompletion for an `AddressField` from open tabs, a `HistoryStore` and your own providers. See [Address bar suggestions](#address-bar-suggestions). |
 | `CommandPalette` | Keyboard-first overlay that runs actions, switches tabs, reopens closed tabs and opens bookmarks, history entries or typed addresses, with fuzzy matching and your own providers. See [Command palette](#command-palette). |
 | `LinkHints` | Keyboard link hints (as in Vimium or qutebrowser) for a `view`: labels the clickable elements in view, typing a label clicks, opens, copies, focuses or hovers one. See [Link hints and keyboard browsing](#link-hints-and-keyboard-browsing). |
 | `FindBar` | Find-in-page bar for `view`: Enter next, Shift+Enter previous, Escape closes. `text`, `matchCount`, `activeMatch`, `matchCase`, `open()`, `close()`, `findNext(forward)`, signal `closeRequested()`. |
-| `RequestOverlay` | Shows JavaScript dialogs and permission prompts of a `WebTabs` (`tabs`, required) as an in-page card; requests of background tabs wait until their tab is shown. `rememberPermissions` (per origin and permission, this session). |
+| `RequestOverlay` | Shows JavaScript dialogs and permission prompts of a `WebTabs` (`tabs`, required) as an in-page card; requests of background tabs wait until their tab is shown. Permission cards have a "Remember this decision" checkbox (`remember`, initially `rememberByDefault`, default true): the decision is stored per permission for the origin in `tabs.siteSettings`, or without one in `decisions` for this session. `rememberPermissions: false` hides it. `accept()`, `reject()`, `dismiss()` (Escape: closes a permission card without deciding). |
 | `ContextMenu` | Right-click menu for a `WebTabs` (`tabs`, required), drawn inside the window: open/copy link, undo/redo/cut/copy/paste/select all in editable fields, copy selection, otherwise back/forward/reload. Signal `openLinkInNewTab(url)`; `show(view, x, y, linkUrl, selectedText, editable)`, `close()`. |
 | `DownloadsBar` | Strip listing `Cef.downloads` with progress; click opens a finished file, ■ cancels, × and "Clear" remove finished entries. Hidden when empty. |
 | `StatusBubble` | Bottom-left bubble showing `view.hoveredUrl`. |
@@ -936,6 +1019,127 @@ manager or suggestions), `showBookmarksBar` (default true), `bookmarksBar`,
 `hideBookmarks()` and `openBookmark(url, newTab)` (in the current tab, or a
 background tab next to it, as the bar and manager do).
 
+### Site settings
+
+`Browser` remembers per-site choices in its `siteSettings` (a
+[`SiteSettings`](#sitesettings-and-sitesettingsmodel) on
+`site-settings.json`; set it to `null` to turn per-site settings off):
+
+- **Permissions.** The permission card of `RequestOverlay` has a "Remember
+  this decision" checkbox, on by default. A remembered Allow or Block is
+  stored for the requesting origin and answers later requests of that origin
+  before any card shows, also after a restart. "Ask" (the default) shows the
+  card.
+- **Zoom.** With `WebTabs.zoomPolicy: "origin"` (the default) zooming a tab
+  stores the zoom for its origin, applies it to the origin's other tabs and
+  restores it on every navigation to the origin (as Chrome does). A zoom
+  equal to what the site gets anyway removes the stored value.
+  `zoomPolicy: "tab"` keeps a zoom per tab instead: `zoomFactor` is left
+  alone across navigations and nothing is stored.
+- **JavaScript, images and pop-ups** are pushed into Chromium's content
+  settings before every navigation (`navigationRequested`), so a `block`
+  takes effect from the next document load. `popups: "block"` (the default)
+  is Chromium's pop-up blocker: `window.open()` without a user gesture is
+  dropped; with `allow` it reaches `newWindowRequested` like any pop-up.
+- **The site info card** (`SiteInfo`, the ⓘ button left of the address
+  field, action `site.info`): the origin, the connection (secure, insecure,
+  certificate error, with the certificate's subject, issuer and expiry),
+  Ask / Allow / Block for camera, microphone, location, notifications and
+  clipboard, Allow / Block for JavaScript, images and pop-ups, zoom − / + /
+  reset, "Reset all for this site", "Clear cookies and site data" (DevTools
+  `Storage.clearDataForOrigin` with all storage types) and a link to the
+  site settings page. Changing JavaScript, images or pop-ups offers a
+  "Reload".
+- **The site settings page** (`SiteSettingsManager` in a `PanelOverlay`,
+  action `site.settings`): every stored site (origins, hosts, `[*.]`
+  patterns and the `*` default) with its values as chips; × on a chip
+  resets one value, "Reset" a site, "Reset all…" (with a confirmation)
+  everything. Searchable by site and key names.
+
+Neither action has a default key; bind them if you like
+(`bindings: ({ "site.info": ["Ctrl+I"] })`).
+
+**`SiteInfo`**: `view`, `store`, `anchorItem` (where `open()` /
+`toggle()` place it without an argument), `settingKeys` (the rows:
+`[{ key, label }]`; keys the origin stores are listed too), `storeZoom`
+(zoom changes are stored for the site; `false`: they only change
+`zoomFactor`), `zoomStep` (0.1), `showClearData`, `showManageLink`;
+read-only `opened`, `url`, `origin`, `hasSettings` (http(s) pages with a
+store), `security` (`"secure"`, `"insecure"`, `"certificate-error"`,
+`"file"`, `"internal"`), `rows`, `needsReload`, `status`, `card`.
+`open(anchor)`, `close()`, `toggle(anchor)`, `value(key)`,
+`isCustom(key)` (the origin itself stores it), `setValue(key, value)`,
+`zoomIn()`, `zoomOut()`, `resetZoom()`, `resetAll()`,
+`clearSiteData(callback(ok, error))`, `reload()`; signals
+`siteDataCleared(origin, ok)`, `manageRequested()`. Without a `store` it
+shows the connection and "Clear cookies and site data" only. It is drawn in
+the window's content item above everything else.
+
+**`SiteSettingsManager`**: `store`, `filterText`, `currentIndex`, `count`,
+`model` (a `SiteSettingsModel`), `title`, `closable`, `confirming`,
+`status`; `focusDefault()`, `entryAt(row)`, `rowAt(row)`,
+`resetSite(row, key)`, `askResetAll()`, `resetAll()`; signal
+`closeRequested()`. In the search field Up/Down/PgUp/PgDown select,
+Shift+Delete resets the selected site, Escape cancels "Reset all…", then
+clears the search, then closes.
+
+A layout of your own gets everything without `Browser`:
+
+```qml
+SiteSettings { id: sites }
+Column {
+    anchors.fill: parent
+    NavigationBar { id: nav; width: parent.width; view: tabs.currentView; siteSettings: sites }
+    WebTabs { id: tabs; width: parent.width; height: parent.height - y; siteSettings: sites }
+}
+RequestOverlay { anchors.fill: parent; tabs: tabs }   // "Remember this decision"
+PanelOverlay {
+    id: sitesOverlay
+    anchors.fill: parent
+    SiteSettingsManager { anchors.fill: parent; store: sites; onCloseRequested: sitesOverlay.close() }
+}
+BrowserActions {
+    siteInfo: nav.siteInfo             // site.info
+    siteSettingsManager: sitesOverlay  // site.settings
+    // ...
+}
+```
+
+or only parts of it, e.g. a site info card on a button of your own, a
+policy set in code, or a store used only for lookups:
+
+```qml
+SiteInfo { id: info; view: tabs.currentView; store: sites; storeZoom: tabs.zoomPolicy === "origin" }
+IconButton { text: "ⓘ"; onClicked: info.toggle(this) }
+
+Component.onCompleted: {
+    sites.set("*", "javascript", "block")                  // JavaScript off by default
+    sites.set("[*.]example.com", "javascript", "allow")    // ... but on for example.com
+    sites.set("https://meet.example.com", "camera", "allow")
+}
+// An app setting of your own, looked up per site:
+// sites.set("https://news.example", "readerMode", true)
+// sites.effective(view.url, "readerMode")
+```
+
+Notes:
+
+- Chromium keeps zoom **per host**, so two origins on one host (different
+  ports or schemes) share the zoom of the tab that applied it last; the
+  store still keeps them apart and each tab gets its origin's zoom again on
+  its next navigation.
+- Without `RequestOverlay` (or anything else with `interceptPermissions`)
+  `WebTabs` still answers remembered decisions; requests that would "ask"
+  are dismissed.
+- Content settings live in the Chromium profile as well (Chromium persists
+  them). `SiteSettings` writes the exceptions of the origins it applied and
+  the `*` defaults, and resets them to `"default"` when they are removed, so
+  the store stays the source of truth. `contentSettings: false` leaves
+  Chromium alone.
+- `navigator.permissions.query()` reads Chromium's content settings, so
+  pages see a remembered decision as `"granted"` / `"denied"` (with
+  `contentSettings: true`); "ask" reads as `"prompt"`.
+
 ### Sessions
 
 `SessionStore` keeps the open tabs of a `WebTabs` (URL, title, favicon, zoom,
@@ -1193,6 +1397,8 @@ and the same pieces work in a layout of your own.
 | `bookmark.toggle` | Ctrl+D | bookmarks the page (with `bookmarkButton`: and opens its editor) or removes its bookmarks; `checked` while bookmarked |
 | `bookmarks.showBar` | Ctrl+Shift+B | checkable: shows / hides the bookmarks bar; `{ show }` sets it |
 | `bookmarks.manage` | Ctrl+Shift+O | shows / hides the bookmark manager; `checked` while shown |
+| `site.info` | | shows / hides the site information card (`SiteInfo`) of the current page; `checked` while shown |
+| `site.settings` | | shows / hides the site settings page (`SiteSettingsManager`); `checked` while shown |
 | `palette.show` | Ctrl+Shift+P (commands), Ctrl+K | shows / hides the command palette; `{ prefix }` opens a mode (`">"`, `"@"`, `"*"`, `"#"`); `checked` while shown |
 | `hints.open` | Alt+F | link hints: typing a label clicks the element; args: `LinkHints.show()` options (e.g. `{ modifiers: Qt.ControlModifier }`); needs `linkHints` |
 | `hints.newTab` | Alt+Shift+F | link hints for links: opens one in a background tab (`{ background: false }`: in front) |
@@ -1205,7 +1411,7 @@ and the same pieces work in a layout of your own.
 Every action has a human-readable `text`, and `enabled` follows the state
 (e.g. `nav.back` only with history). Disabled actions do not run, and their
 keys go through to the page or the focused field. Actions without default
-keys (`nav.stop`, `edit.*`, `page.scroll*`) are meant for menus, palettes and
+keys (`nav.stop`, `edit.*`, `page.scroll*`, `site.*`) are meant for menus, palettes and
 your own bindings: window-wide Escape, Ctrl+C or arrow keys would take those
 keys from pages. Window-wide keys always win over the page: Alt+F and
 Alt+Shift+F shadow a page's `accesskey="f"` (Alt+key on Linux); rebind
@@ -1545,8 +1751,13 @@ TEST_INPUT=tests/tst_browser.qml tests/run.sh build offscreen
 
 The suites need `qmltestrunner` (`qt6-declarative-dev-tools`), `weston` for
 the Wayland suite and the `qml` tool (`qml-qt6`) plus `python3` for
-`cdp-remote`; missing tools skip the suite. Tests use `data:` URLs and need no
-network. `tests/run.sh` also runs against an installed or extracted tree:
+`cdp-remote`; missing tools skip the suite. Tests need no network: they use `data:` URLs
+and a local HTTP server that `tests/run.sh` starts (`tests/http_server.py`,
+`python3`), whose origin is in `TEST_HTTP_ORIGIN` (`http://127.0.0.1:<port>`;
+`/pN?html=...` serves the given HTML). `run.sh` also adds
+`--use-fake-device-for-media-stream` to `CEF_QML_FLAGS` so that camera and
+microphone requests reach the permission handlers. Without `python3` the
+tests that need the server skip. `tests/run.sh` also runs against an installed or extracted tree:
 `tests/run.sh <prefix>/qml offscreen`. See
 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the details and gotchas.
 

@@ -38,6 +38,14 @@ Item {
         // address bar, Ctrl+H shows it. historyStore: null turns it off;
         // browser.historyStore.recording = false is private browsing.
 
+        // Site settings: remembered permission decisions, per-site zoom,
+        // JavaScript / images / pop-ups in Cef.dataDir/site-settings.json.
+        // The (i) button left of the address field shows the site info card;
+        // "site.info" / "site.settings" have no keys by default.
+        // siteSettings: null turns per-site settings off;
+        // tabs.zoomPolicy: "tab" keeps a zoom per tab instead of per site.
+        // Component.onCompleted: browser.siteSettings.set("*", "javascript", "block")
+
         // An action of your own; give it keys here or in `bindings`.
         // BrowserAction {
         //     registry: browser.actions
