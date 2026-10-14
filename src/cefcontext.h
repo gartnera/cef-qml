@@ -8,6 +8,7 @@
 #include <atomic>
 
 class CefQmlClient;
+class CefDownload;
 
 // Process-wide CEF state.
 //
@@ -38,8 +39,15 @@ class CefContext : public QObject {
   // Directory holding libcef.so, its resources and cef-qml-helper.
   QString runtimeDir() const { return m_runtimeDir; }
 
+  // Every download started in this process, oldest first.
+  QList<CefDownload*> downloads() const { return m_downloads; }
+  void addDownload(CefDownload* download);
+
   // Chromium --ozone-platform value chosen for this process.
   QString ozonePlatform() const { return m_ozonePlatform; }
+
+ Q_SIGNALS:
+  void downloadsChanged();
 
  private:
   enum class State { Uninitialized, Running, Failed, ShutDown };
@@ -60,6 +68,7 @@ class CefContext : public QObject {
   bool m_inWork = false;
   bool m_reentrancyDetected = false;
   QSet<CefQmlClient*> m_clients;
+  QList<CefDownload*> m_downloads;
   QString m_runtimeDir;
   QString m_ozonePlatform;
 };

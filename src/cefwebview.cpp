@@ -7,12 +7,19 @@
 #include <QCursor>
 #include <QGuiApplication>
 #include <QInputMethod>
+#include <QJSEngine>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QQmlEngine>
 #include <QLoggingCategory>
 #include <QQuickWindow>
 #include <QSGSimpleTextureNode>
 #include <QSGTexture>
 
 #include <cmath>
+#include <memory>
+#include <utility>
 #include <cstring>
 
 #include "include/cef_browser.h"
@@ -146,6 +153,12 @@ void CefWebView::createBrowser() {
   }
   if (start.isEmpty())
     start = QUrl(QStringLiteral("about:blank"));
+  if (!m_userScripts.isEmpty()) {
+    // User scripts are registered over DevTools once the browser exists; hold
+    // the real first navigation until then so they apply to it too.
+    m_deferredStartUrl = start;
+    start = QUrl(QStringLiteral("about:blank"));
+  }
 
   if (!CefBrowserHost::CreateBrowser(windowInfo, m_client, cefstr(start.toString()),
                                      settings, nullptr, nullptr)) {
@@ -172,11 +185,17 @@ void CefWebView::cefAfterCreated() {
     h->SetFocus(true);
   h->WasResized();
   m_ready = true;
+  if (m_pendingLoad.isValid())
+    loadInBrowser(std::exchange(m_pendingLoad, QUrl()));
+  flushDevToolsQueue();
+  applyUserScripts();
   Q_EMIT readyChanged();
 }
 
 void CefWebView::cefBeforeClose() {
   m_client = nullptr;
+  m_devToolsCallbacks.clear();
+  m_devToolsQueue.clear();
   if (m_ready) {
     m_ready = false;
     Q_EMIT readyChanged();
@@ -319,6 +338,14 @@ void CefWebView::setUrl(const QUrl& url) {
     return;
   m_url = url;
   Q_EMIT urlChanged();
+  if (m_client && !m_ready) {
+    // Creation in flight: navigate once the browser exists.
+    if (m_deferredStartUrl.isValid())
+      m_deferredStartUrl = url;
+    else
+      m_pendingLoad = url;
+    return;
+  }
   loadInBrowser(url);  // before creation the URL is used as the start page
 }
 
@@ -407,6 +434,164 @@ void CefWebView::runJavaScript(const QString& script) {
   if (m_client && m_client->browser()) {
     auto frame = m_client->browser()->GetMainFrame();
     frame->ExecuteJavaScript(cefstr(script), frame->GetURL(), 0);
+  }
+}
+
+// ---- DevTools / scripting --------------------------------------------------
+
+int CefWebView::sendDevTools(const QString& method, const QVariantMap& params,
+                             DevToolsCallback cb) {
+  const int id = m_nextDevToolsId++;
+  QJsonObject msg{{QStringLiteral("id"), id}, {QStringLiteral("method"), method}};
+  if (!params.isEmpty())
+    msg.insert(QStringLiteral("params"), QJsonObject::fromVariantMap(params));
+  const QByteArray json = QJsonDocument(msg).toJson(QJsonDocument::Compact);
+  if (cb)
+    m_devToolsCallbacks.insert(id, std::move(cb));
+
+  if (!m_ready) {
+    m_devToolsQueue.append({id, json});
+    return id;
+  }
+  auto h = host();
+  if (!h || !h->SendDevToolsMessage(json.constData(), size_t(json.size()))) {
+    if (auto failed = m_devToolsCallbacks.take(id))
+      failed(false, QJsonObject{{QStringLiteral("message"), QStringLiteral("browser closed")}});
+  }
+  return id;
+}
+
+void CefWebView::flushDevToolsQueue() {
+  const auto queue = std::exchange(m_devToolsQueue, {});
+  auto h = host();
+  for (const auto& p : queue) {
+    if (!h || !h->SendDevToolsMessage(p.message.constData(), size_t(p.message.size()))) {
+      if (auto failed = m_devToolsCallbacks.take(p.id))
+        failed(false, QJsonObject{{QStringLiteral("message"), QStringLiteral("browser closed")}});
+    }
+  }
+}
+
+void CefWebView::cefDevToolsResult(int id, bool success, const QByteArray& json) {
+  auto cb = m_devToolsCallbacks.take(id);
+  if (!cb)
+    return;
+  const QJsonDocument doc = QJsonDocument::fromJson(json);
+  cb(success, doc.isObject() ? QJsonValue(doc.object()) : QJsonValue(doc.array()));
+}
+
+void CefWebView::cefDevToolsEvent(const QString& method, const QByteArray& json) {
+  Q_EMIT devToolsEvent(method, QJsonDocument::fromJson(json).toVariant());
+}
+
+void CefWebView::callJs(const QJSValue& callback, const QVariant& result,
+                        const QString& error) {
+  if (!callback.isCallable())
+    return;
+  QJSEngine* engine = qjsEngine(this);
+  if (!engine)
+    return;
+  const QJSValue undefined(QJSValue::UndefinedValue);
+  QJSValue fn = callback;
+  const QJSValue ret = fn.call({result.isValid() ? engine->toScriptValue(result) : undefined,
+                               error.isEmpty() ? undefined : QJSValue(error)});
+  if (ret.isError())
+    qCWarning(lcCef) << "callback threw:" << ret.toString();
+}
+
+int CefWebView::devToolsMethod(const QString& method, const QVariantMap& params,
+                               const QJSValue& callback) {
+  DevToolsCallback cb;
+  if (callback.isCallable()) {
+    cb = [this, callback](bool ok, const QJsonValue& result) {
+      if (ok)
+        callJs(callback, result.toVariant(), QString());
+      else
+        callJs(callback, QVariant(),
+               result.toObject().value(QStringLiteral("message")).toString(
+                   QStringLiteral("DevTools call failed")));
+    };
+  }
+  return sendDevTools(method, params, std::move(cb));
+}
+
+void CefWebView::evaluateJavaScript(const QString& script, const QJSValue& callback) {
+  const QVariantMap params{
+      {QStringLiteral("expression"), script},
+      {QStringLiteral("returnByValue"), true},
+      {QStringLiteral("awaitPromise"), true},
+      {QStringLiteral("userGesture"), true},
+  };
+  sendDevTools(QStringLiteral("Runtime.evaluate"), params,
+               [this, callback](bool ok, const QJsonValue& result) {
+                 const QJsonObject obj = result.toObject();
+                 if (!ok) {
+                   callJs(callback, QVariant(),
+                          obj.value(QStringLiteral("message")).toString(
+                              QStringLiteral("evaluation failed")));
+                   return;
+                 }
+                 if (obj.contains(QStringLiteral("exceptionDetails"))) {
+                   const QJsonObject ex = obj.value(QStringLiteral("exceptionDetails")).toObject();
+                   QString msg = ex.value(QStringLiteral("exception"))
+                                     .toObject()
+                                     .value(QStringLiteral("description"))
+                                     .toString();
+                   if (msg.isEmpty())
+                     msg = ex.value(QStringLiteral("text")).toString();
+                   callJs(callback, QVariant(), msg);
+                   return;
+                 }
+                 const QJsonObject r = obj.value(QStringLiteral("result")).toObject();
+                 QVariant value;
+                 if (r.contains(QStringLiteral("value")))
+                   value = r.value(QStringLiteral("value")).toVariant();
+                 if (!value.isValid() && r.value(QStringLiteral("type")).toString() != QLatin1String("undefined"))
+                   value = QVariant::fromValue(nullptr);
+                 callJs(callback, value, QString());
+               });
+}
+
+void CefWebView::setUserScripts(const QStringList& scripts) {
+  if (scripts == m_userScripts)
+    return;
+  m_userScripts = scripts;
+  if (m_ready)
+    applyUserScripts();
+  Q_EMIT userScriptsChanged();
+}
+
+void CefWebView::applyUserScripts() {
+  for (const QString& id : std::as_const(m_userScriptIds)) {
+    sendDevTools(QStringLiteral("Page.removeScriptToEvaluateOnNewDocument"),
+                 {{QStringLiteral("identifier"), id}}, nullptr);
+  }
+  m_userScriptIds.clear();
+
+  auto loadDeferred = [this] {
+    if (m_deferredStartUrl.isValid()) {
+      const QUrl url = std::exchange(m_deferredStartUrl, QUrl());
+      loadInBrowser(url);
+    }
+  };
+  if (m_userScripts.isEmpty()) {
+    loadDeferred();
+    return;
+  }
+  // Scripts only take effect while the Page domain is enabled.
+  sendDevTools(QStringLiteral("Page.enable"), {}, nullptr);
+  auto remaining = std::make_shared<int>(int(m_userScripts.size()));
+  for (const QString& source : std::as_const(m_userScripts)) {
+    sendDevTools(QStringLiteral("Page.addScriptToEvaluateOnNewDocument"),
+                 {{QStringLiteral("source"), source}},
+                 [this, remaining, loadDeferred](bool ok, const QJsonValue& r) {
+                   if (ok)
+                     m_userScriptIds << r.toObject().value(QStringLiteral("identifier")).toString();
+                   else
+                     qCWarning(lcCef) << "failed to install user script" << r;
+                   if (--*remaining == 0)
+                     loadDeferred();
+                 });
   }
 }
 
@@ -523,11 +708,6 @@ void CefWebView::cefImeBounds(const QRect& bounds) {
   m_imeBounds = bounds;
   if (hasActiveFocus())
     QGuiApplication::inputMethod()->update(Qt::ImCursorRectangle);
-}
-
-bool CefWebView::cefWantsPopupSignal() const {
-  static const QMetaMethod sig = QMetaMethod::fromSignal(&CefWebView::newWindowRequested);
-  return isSignalConnected(sig);
 }
 
 // ---- input -----------------------------------------------------------------

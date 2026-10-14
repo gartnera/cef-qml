@@ -34,6 +34,40 @@ Item {
     SignalSpy { id: newWindowSpy; target: view; signalName: "newWindowRequested" }
     SignalSpy { id: contextMenuSpy; target: view; signalName: "contextMenuRequested" }
     SignalSpy { id: loadFinishedSpy; target: view; signalName: "loadFinished" }
+    SignalSpy { id: findSpy; target: view; signalName: "findResult" }
+    SignalSpy { id: devToolsEventSpy; target: view; signalName: "devToolsEvent" }
+
+    // A second view created with user scripts, to check they apply to the
+    // very first navigation.
+    Component {
+        id: scriptedView
+        CefWebView {
+            width: 100; height: 100
+            userScripts: ["window.injected = 'yes'; document.addEventListener('DOMContentLoaded', () => document.title = 'injected:' + window.injected)"]
+            url: "data:text/html,<title>original</title>"
+        }
+    }
+
+    // Answers JavaScript dialogs according to `dialogAnswer` while enabled.
+    property bool handleDialogs: false
+    property var dialogAnswer: null
+    property var lastDialog: null
+    Connections {
+        target: root.handleDialogs ? view : null
+        function onJavaScriptDialogRequested(dialog) {
+            root.lastDialog = { type: dialog.type, message: dialog.message, defaultText: dialog.defaultText }
+            if (root.dialogAnswer === null) dialog.reject()
+            else dialog.accept(root.dialogAnswer)
+        }
+        function onFileDialogRequested(request) {
+            root.lastDialog = { mode: request.mode, filters: Array.from(request.acceptFilters) }
+            request.accept(["/etc/hostname"])
+        }
+        function onDownloadRequested(download) {
+            download.accept(root.downloadDir)
+        }
+    }
+    property string downloadDir: ""
 
     TestCase {
         name: "CefWebView"
@@ -160,6 +194,155 @@ Item {
             tryVerify(() => view.frameCount > before, 5000)
             tryVerify(() => grabImage(view).width === 300, 5000)
             root.width = 400
+        }
+
+        function test_13_dialogs_unhandled() {
+            root.handleDialogs = false
+            view.loadHtml("<title>d</title><script>setTimeout(() => document.title = 'c:' + confirm('q'), 100)</script>")
+            tryCompare(view, "title", "c:false", 10000)
+        }
+
+        function test_14_dialogs_handled() {
+            root.handleDialogs = true
+            root.dialogAnswer = "hello"
+            view.loadHtml("<title>d</title><script>setTimeout(() => document.title = 'p:' + prompt('name?', 'def'), 100)</script>")
+            tryCompare(view, "title", "p:hello", 10000)
+            compare(root.lastDialog.type, CefJavaScriptDialog.Prompt)
+            compare(root.lastDialog.message, "name?")
+            compare(root.lastDialog.defaultText, "def")
+
+            root.dialogAnswer = null
+            view.loadHtml("<title>d</title><script>setTimeout(() => document.title = 'c:' + confirm('sure?'), 100)</script>")
+            tryCompare(view, "title", "c:false", 10000)
+            compare(root.lastDialog.type, CefJavaScriptDialog.Confirm)
+
+            root.dialogAnswer = ""
+            view.loadHtml("<title>d</title><script>setTimeout(() => { alert('hi'); document.title = 'alerted' }, 100)</script>")
+            tryCompare(view, "title", "alerted", 10000)
+            compare(root.lastDialog.type, CefJavaScriptDialog.Alert)
+        }
+
+        function test_15_find() {
+            view.loadHtml("<title>f</title><p>apple banana apple cherry apple</p>")
+            tryCompare(view, "title", "f", 10000)
+            findSpy.clear()
+            const lastFinal = () => {
+                for (let i = findSpy.count - 1; i >= 0; --i)
+                    if (findSpy.signalArguments[i][2]) return findSpy.signalArguments[i]
+                return null
+            }
+            view.find("apple")
+            tryVerify(() => lastFinal() !== null, 5000)
+            compare(lastFinal()[0], 3)
+            // Repeating the same text moves to the next match.
+            findSpy.clear()
+            view.find("apple")
+            view.find("apple")
+            tryVerify(() => lastFinal() !== null && lastFinal()[1] === 2, 5000)
+            findSpy.clear()
+            view.find("apple", false)
+            tryVerify(() => lastFinal() !== null && lastFinal()[1] === 1, 5000)
+            view.stopFinding()
+        }
+
+        function test_16_file_dialog() {
+            root.handleDialogs = true
+            view.loadHtml(`<title>file</title><body style="margin:0">
+              <input type=file accept=".txt" style="position:absolute;left:0;top:0;width:200px;height:40px"
+                     onchange="document.title = 'file:' + this.files[0].name">`)
+            tryCompare(view, "title", "file", 10000)
+            wait(200)
+            mouseClick(view, 50, 20)
+            tryCompare(view, "title", "file:hostname", 10000)
+            compare(root.lastDialog.mode, CefFileDialogRequest.Open)
+            compare(root.lastDialog.filters.length, 1)
+            compare(root.lastDialog.filters[0], ".txt")
+        }
+
+        function test_17_download() {
+            root.handleDialogs = true
+            root.downloadDir = Cef.runtimeDir + "/../test-downloads/"
+            const before = Cef.downloads.length
+            view.loadHtml(`<title>dl</title><body style="margin:0">
+              <a download="hello.txt" href="data:text/plain,hello%20world"
+                 style="position:absolute;left:0;top:0;width:200px;height:40px;display:block">dl</a>`)
+            tryCompare(view, "title", "dl", 10000)
+            wait(200)
+            mouseClick(view, 50, 20)
+            tryVerify(() => Cef.downloads.length === before + 1, 10000)
+            const d = Cef.downloads[Cef.downloads.length - 1]
+            tryCompare(d, "state", CefDownload.Complete, 10000)
+            compare(d.suggestedFileName, "hello.txt")
+            compare(d.receivedBytes, 11)
+            verify(d.path.endsWith("/hello.txt") || d.path.indexOf("hello (") >= 0, d.path)
+            compare(d.progress, 1)
+            d.remove()
+            tryVerify(() => Cef.downloads.length === before, 5000)
+            root.handleDialogs = false
+        }
+
+        // evaluateJavaScript() wrapper returning [result, error] once done.
+        function evaluate(target, script) {
+            let out = null
+            target.evaluateJavaScript(script, (r, e) => out = [r, e])
+            tryVerify(() => out !== null, 10000, "evaluate: " + script)
+            return out
+        }
+
+        function test_18_evaluateJavaScript() {
+            view.loadHtml("<title>eval</title><div id=x data-n=41>hi</div>")
+            tryCompare(view, "title", "eval", 10000)
+            compare(evaluate(view, "1 + 2")[0], 3)
+            compare(evaluate(view, "document.getElementById('x').textContent")[0], "hi")
+            const obj = evaluate(view, "({a: [1, 2], b: {c: 'd'}, n: null})")[0]
+            compare(obj.a.length, 2)
+            compare(obj.b.c, "d")
+            compare(obj.n, null)
+            compare(evaluate(view, "new Promise(r => setTimeout(() => r('later'), 50))")[0], "later")
+            const err = evaluate(view, "throw new Error('boom')")
+            compare(err[0], undefined)
+            verify(err[1].indexOf("boom") >= 0, err[1])
+            compare(evaluate(view, "undefined")[0], undefined)
+            // Mutations are visible to the page.
+            evaluate(view, "document.title = 'changed'")
+            tryCompare(view, "title", "changed", 5000)
+        }
+
+        function test_19_devToolsMethod() {
+            let shot = null
+            view.devToolsMethod("Page.captureScreenshot", { format: "png" }, (r, e) => shot = [r, e])
+            tryVerify(() => shot !== null, 10000)
+            compare(shot[1], undefined)
+            verify(shot[0].data.length > 100, "base64 png expected")
+
+            let bad = null
+            view.devToolsMethod("No.suchMethod", {}, (r, e) => bad = [r, e])
+            tryVerify(() => bad !== null, 10000)
+            verify(bad[1].length > 0)
+
+            devToolsEventSpy.clear()
+            let enabled = false
+            view.devToolsMethod("Runtime.enable", {}, () => enabled = true)
+            tryVerify(() => enabled, 5000)
+            view.runJavaScript("console.log('via-cdp')")
+            tryVerify(() => {
+                for (let i = 0; i < devToolsEventSpy.count; ++i) {
+                    const [method, params] = devToolsEventSpy.signalArguments[i]
+                    if (method === "Runtime.consoleAPICalled" && params.args[0].value === "via-cdp")
+                        return true
+                }
+                return false
+            }, 5000)
+            view.devToolsMethod("Runtime.disable")
+        }
+
+        function test_20_userScripts() {
+            const v = createTemporaryObject(scriptedView, root)
+            tryCompare(v, "title", "injected:yes", 15000)
+            // Changing the scripts applies to the next document.
+            v.userScripts = ["document.addEventListener('DOMContentLoaded', () => document.title = 'second')"]
+            v.reload()
+            tryCompare(v, "title", "second", 10000)
         }
 
         function test_12_urlFromUserInput() {

@@ -2,13 +2,28 @@
 
 #include "cefcontext.h"
 #include "cefwebview.h"
+#include "requests.h"
 
+#include <QClipboard>
 #include <QDir>
+#include <QGuiApplication>
 #include <QFileInfo>
 #include <QQmlEngine>
 #include <QRegularExpression>
 
 #include "include/cef_version_info.h"
+
+CefGlobal::CefGlobal(QObject* parent) : QObject(parent) {
+  connect(CefContext::instance(), &CefContext::downloadsChanged, this,
+          &CefGlobal::downloadsChanged);
+}
+
+QList<QObject*> CefGlobal::downloads() const {
+  QList<QObject*> list;
+  for (CefDownload* d : CefContext::instance()->downloads())
+    list.append(d);
+  return list;
+}
 
 QString CefGlobal::version() const {
   return QStringLiteral("%1.%2.%3")
@@ -65,8 +80,17 @@ QUrl CefGlobal::urlFromUserInput(const QString& input) const {
   return QUrl((local ? QStringLiteral("http://") : QStringLiteral("https://")) + text);
 }
 
+void CefGlobal::copyToClipboard(const QString& text) const {
+  QGuiApplication::clipboard()->setText(text);
+}
+
 void CefQmlPlugin::registerTypes(const char* uri) {
   qmlRegisterType<CefWebView>(uri, 1, 0, "CefWebView");
+  const QString why = QStringLiteral("created by CefWebView");
+  qmlRegisterUncreatableType<CefJavaScriptDialog>(uri, 1, 0, "CefJavaScriptDialog", why);
+  qmlRegisterUncreatableType<CefPermissionRequest>(uri, 1, 0, "CefPermissionRequest", why);
+  qmlRegisterUncreatableType<CefFileDialogRequest>(uri, 1, 0, "CefFileDialogRequest", why);
+  qmlRegisterUncreatableType<CefDownload>(uri, 1, 0, "CefDownload", why);
   qmlRegisterSingletonType<CefGlobal>(uri, 1, 0, "Cef",
                                       [](QQmlEngine*, QJSEngine*) -> QObject* {
                                         return new CefGlobal;

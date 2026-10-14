@@ -1,12 +1,20 @@
 #pragma once
 
 #include <QColor>
+#include <QHash>
 #include <QImage>
+#include <QJSValue>
+#include <QJsonValue>
+#include <QVariant>
+
+#include <functional>
 #include <QQuickItem>
 #include <QRect>
 #include <QUrl>
 
 #include "include/cef_base.h"
+
+#include "requests.h"
 
 class CefQmlClient;
 class CefBrowser;
@@ -39,6 +47,9 @@ class CefWebView : public QQuickItem {
   // True once the underlying CEF browser exists.
   Q_PROPERTY(bool ready READ ready NOTIFY readyChanged)
   Q_PROPERTY(int frameCount READ frameCount NOTIFY frameSwapped)
+  // JavaScript sources run in every document before the page's own scripts
+  // (Page.addScriptToEvaluateOnNewDocument).
+  Q_PROPERTY(QStringList userScripts READ userScripts WRITE setUserScripts NOTIFY userScriptsChanged)
 
  public:
   enum ConsoleLevel { Debug = 0, Info, Warning, Error };
@@ -62,6 +73,8 @@ class CefWebView : public QQuickItem {
   bool audioMuted() const { return m_audioMuted; }
   void setAudioMuted(bool muted);
   bool fullscreen() const { return m_fullscreen; }
+  QStringList userScripts() const { return m_userScripts; }
+  void setUserScripts(const QStringList& scripts);
   QColor backgroundColor() const { return m_backgroundColor; }
   void setBackgroundColor(const QColor& color);
   int frameRate() const { return m_frameRate; }
@@ -78,6 +91,17 @@ class CefWebView : public QQuickItem {
   Q_INVOKABLE void stop();
   // Fire-and-forget JavaScript in the main frame.
   Q_INVOKABLE void runJavaScript(const QString& script);
+  // Evaluates `script` in the main frame and calls `callback(result, error)`.
+  // Promises are awaited; the result must be JSON-serializable. On failure
+  // `result` is undefined and `error` is a message.
+  Q_INVOKABLE void evaluateJavaScript(const QString& script,
+                                      const QJSValue& callback = QJSValue());
+  // Calls any Chrome DevTools Protocol method, e.g.
+  //   devToolsMethod("Page.captureScreenshot", {format: "png"}, (r, err) => ...)
+  // Calls made before the browser exists are queued. Returns the message id.
+  Q_INVOKABLE int devToolsMethod(const QString& method,
+                                 const QVariantMap& params = QVariantMap(),
+                                 const QJSValue& callback = QJSValue());
   Q_INVOKABLE void loadHtml(const QString& html);
   Q_INVOKABLE void find(const QString& text, bool forward = true, bool matchCase = false);
   Q_INVOKABLE void stopFinding(bool clearSelection = true);
@@ -106,6 +130,10 @@ class CefWebView : public QQuickItem {
   void activeChanged();
   void readyChanged();
   void frameSwapped();
+  void userScriptsChanged();
+  // DevTools protocol events. Enable a domain first, e.g.
+  // devToolsMethod("Network.enable").
+  void devToolsEvent(const QString& method, const QVariant& params);
 
   // A page asked for a new window/tab (target=_blank, window.open, middle
   // click, ...). If nothing is connected, the URL is opened in this view.
@@ -119,6 +147,18 @@ class CefWebView : public QQuickItem {
   void contextMenuRequested(qreal x, qreal y, const QUrl& linkUrl,
                             const QString& selectedText, bool editable);
   void renderProcessTerminated(int status);
+
+  // Decision requests. Connect a handler and answer the request object
+  // (accept()/reject(), grant()/deny()). Unhandled: JavaScript dialogs are
+  // dismissed, permissions denied, file dialogs canceled, and downloads saved
+  // to the user's download directory.
+  void javaScriptDialogRequested(CefJavaScriptDialog* dialog);
+  void permissionRequested(CefPermissionRequest* request);
+  void fileDialogRequested(CefFileDialogRequest* request);
+  void downloadRequested(CefDownload* download);
+
+  // Result of find(). activeMatch is 1-based.
+  void findResult(int count, int activeMatch, bool finalUpdate);
 
  protected:
   void componentComplete() override;
@@ -170,9 +210,28 @@ class CefWebView : public QQuickItem {
   void cefFullscreen(bool fullscreen);
   void cefTextInputMode(bool editable);
   void cefImeBounds(const QRect& bounds);
-  bool cefWantsPopupSignal() const;
+  void cefDevToolsResult(int id, bool success, const QByteArray& json);
+  void cefDevToolsEvent(const QString& method, const QByteArray& json);
+
+  using DevToolsCallback = std::function<void(bool ok, const QJsonValue& result)>;
+  int sendDevTools(const QString& method, const QVariantMap& params, DevToolsCallback cb);
+  void flushDevToolsQueue();
+  void applyUserScripts();
+  void callJs(const QJSValue& callback, const QVariant& result, const QString& error);
 
   CefRefPtr<CefQmlClient> m_client;
+
+  struct PendingDevTools {
+    int id;
+    QByteArray message;
+  };
+  int m_nextDevToolsId = 1;
+  QList<PendingDevTools> m_devToolsQueue;
+  QHash<int, DevToolsCallback> m_devToolsCallbacks;
+  QStringList m_userScripts;
+  QStringList m_userScriptIds;
+  QUrl m_deferredStartUrl;
+  QUrl m_pendingLoad;
 
   QUrl m_url;
   QString m_pendingHtml;

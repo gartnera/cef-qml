@@ -1,6 +1,7 @@
 #include "cefcontext.h"
 
 #include "cefclient.h"
+#include "requests.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -289,6 +290,15 @@ void CefContext::registerClient(CefQmlClient* client) {
 
 void CefContext::unregisterClient(CefQmlClient* client) {
   m_clients.remove(client);
+}
+
+void CefContext::addDownload(CefDownload* download) {
+  m_downloads.append(download);
+  connect(download, &QObject::destroyed, this, [this, download] {
+    m_downloads.removeOne(download);
+    Q_EMIT downloadsChanged();
+  });
+  Q_EMIT downloadsChanged();
 }
 
 void CefContext::shutdown() {

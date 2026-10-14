@@ -53,6 +53,152 @@ void CefQmlClient::OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame
       params->IsEditable());
 }
 
+// ---- CefDevToolsMessageObserver --------------------------------------------
+
+void CefQmlClient::OnDevToolsMethodResult(CefRefPtr<CefBrowser>, int messageId, bool success,
+                                          const void* result, size_t resultSize) {
+  if (m_view)
+    m_view->cefDevToolsResult(
+        messageId, success,
+        QByteArray(static_cast<const char*>(result), qsizetype(resultSize)));
+}
+
+void CefQmlClient::OnDevToolsEvent(CefRefPtr<CefBrowser>, const CefString& method,
+                                   const void* params, size_t paramsSize) {
+  if (connected(&CefWebView::devToolsEvent))
+    m_view->cefDevToolsEvent(
+        qstr(method), QByteArray(static_cast<const char*>(params), qsizetype(paramsSize)));
+}
+
+// ---- CefDialogHandler ------------------------------------------------------
+
+bool CefQmlClient::OnFileDialog(CefRefPtr<CefBrowser>, FileDialogMode mode,
+                                const CefString& title, const CefString& defaultFilePath,
+                                const std::vector<CefString>& acceptFilters,
+                                const std::vector<CefString>& acceptExtensions,
+                                const std::vector<CefString>&,
+                                CefRefPtr<CefFileDialogCallback> callback) {
+  if (!connected(&CefWebView::fileDialogRequested))
+    return false;
+  CefFileDialogRequest::Mode m = CefFileDialogRequest::Open;
+  switch (mode) {
+    case FILE_DIALOG_OPEN_MULTIPLE: m = CefFileDialogRequest::OpenMultiple; break;
+    case FILE_DIALOG_OPEN_FOLDER: m = CefFileDialogRequest::OpenFolder; break;
+    case FILE_DIALOG_SAVE: m = CefFileDialogRequest::Save; break;
+    default: break;
+  }
+  QStringList filters, extensions;
+  for (const auto& f : acceptFilters)
+    filters << qstr(f);
+  for (const auto& e : acceptExtensions)
+    extensions << qstr(e);
+  auto* req = new CefFileDialogRequest(m, qstr(title), qstr(defaultFilePath), filters,
+                                       extensions, callback, m_view);
+  Q_EMIT m_view->fileDialogRequested(req);
+  return true;
+}
+
+// ---- CefDownloadHandler ----------------------------------------------------
+
+bool CefQmlClient::OnBeforeDownload(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item,
+                                    const CefString& suggestedName,
+                                    CefRefPtr<CefBeforeDownloadCallback> callback) {
+  // Downloads outlive tabs, so they belong to the process-wide context.
+  auto* download = new CefDownload(item, qstr(suggestedName), callback,
+                                   CefContext::instance());
+  CefContext::instance()->addDownload(download);
+  if (connected(&CefWebView::downloadRequested))
+    Q_EMIT m_view->downloadRequested(download);
+  else
+    download->accept();
+  return true;
+}
+
+void CefQmlClient::OnDownloadUpdated(CefRefPtr<CefBrowser>, CefRefPtr<CefDownloadItem> item,
+                                     CefRefPtr<CefDownloadItemCallback> callback) {
+  if (CefDownload* d = CefDownload::find(item->GetId()))
+    d->update(item, callback);
+}
+
+// ---- CefFindHandler --------------------------------------------------------
+
+void CefQmlClient::OnFindResult(CefRefPtr<CefBrowser>, int, int count, const CefRect&,
+                                int activeMatchOrdinal, bool finalUpdate) {
+  if (m_view)
+    Q_EMIT m_view->findResult(count, activeMatchOrdinal, finalUpdate);
+}
+
+// ---- CefJSDialogHandler ----------------------------------------------------
+
+bool CefQmlClient::OnJSDialog(CefRefPtr<CefBrowser>, const CefString& originUrl,
+                              JSDialogType dialogType, const CefString& messageText,
+                              const CefString& defaultPromptText,
+                              CefRefPtr<CefJSDialogCallback> callback, bool&) {
+  if (!connected(&CefWebView::javaScriptDialogRequested))
+    return false;
+  CefJavaScriptDialog::Type type = CefJavaScriptDialog::Alert;
+  if (dialogType == JSDIALOGTYPE_CONFIRM)
+    type = CefJavaScriptDialog::Confirm;
+  else if (dialogType == JSDIALOGTYPE_PROMPT)
+    type = CefJavaScriptDialog::Prompt;
+  m_dialog = new CefJavaScriptDialog(type, qstr(messageText), qstr(defaultPromptText),
+                                     QUrl(qstr(originUrl)), false, callback, m_view);
+  Q_EMIT m_view->javaScriptDialogRequested(m_dialog);
+  return true;
+}
+
+bool CefQmlClient::OnBeforeUnloadDialog(CefRefPtr<CefBrowser>, const CefString& messageText,
+                                        bool isReload,
+                                        CefRefPtr<CefJSDialogCallback> callback) {
+  if (!connected(&CefWebView::javaScriptDialogRequested))
+    return false;
+  m_dialog = new CefJavaScriptDialog(CefJavaScriptDialog::BeforeUnload, qstr(messageText),
+                                     QString(), m_view->url(), isReload, callback, m_view);
+  Q_EMIT m_view->javaScriptDialogRequested(m_dialog);
+  return true;
+}
+
+void CefQmlClient::OnResetDialogState(CefRefPtr<CefBrowser>) {
+  if (m_dialog)
+    m_dialog->cancelFromPage();
+}
+
+void CefQmlClient::OnDialogClosed(CefRefPtr<CefBrowser>) {
+  m_dialog.clear();
+}
+
+// ---- CefPermissionHandler --------------------------------------------------
+
+bool CefQmlClient::OnRequestMediaAccessPermission(
+    CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, const CefString& requestingOrigin,
+    uint32_t requestedPermissions, CefRefPtr<CefMediaAccessCallback> callback) {
+  if (!connected(&CefWebView::permissionRequested))
+    return false;
+  auto* req = new CefPermissionRequest(QUrl(qstr(requestingOrigin)), requestedPermissions,
+                                       callback, m_view);
+  Q_EMIT m_view->permissionRequested(req);
+  return true;
+}
+
+bool CefQmlClient::OnShowPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t promptId,
+                                          const CefString& requestingOrigin,
+                                          uint32_t requestedPermissions,
+                                          CefRefPtr<CefPermissionPromptCallback> callback) {
+  if (!connected(&CefWebView::permissionRequested))
+    return false;
+  auto* req = new CefPermissionRequest(QUrl(qstr(requestingOrigin)), requestedPermissions,
+                                       promptId, callback, m_view);
+  m_prompts.insert(promptId, req);
+  Q_EMIT m_view->permissionRequested(req);
+  return true;
+}
+
+void CefQmlClient::OnDismissPermissionPrompt(CefRefPtr<CefBrowser>, uint64_t promptId,
+                                             cef_permission_request_result_t) {
+  if (auto req = m_prompts.take(promptId))
+    req->cancelFromPage();
+}
+
 // ---- CefDisplayHandler -----------------------------------------------------
 
 void CefQmlClient::OnAddressChange(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
@@ -132,7 +278,7 @@ bool CefQmlClient::handleNewWindow(const CefString& targetUrl,
   if (!m_view)
     return true;
   const QUrl url(qstr(targetUrl));
-  if (m_view->cefWantsPopupSignal()) {
+  if (connected(&CefWebView::newWindowRequested)) {
     const bool background = disposition == CEF_WOD_NEW_BACKGROUND_TAB;
     Q_EMIT m_view->newWindowRequested(url, userGesture, background);
   } else if (m_browser) {
@@ -153,6 +299,8 @@ bool CefQmlClient::OnBeforePopup(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>, int
 
 void CefQmlClient::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   m_browser = browser;
+  // Released in OnBeforeClose (the registration references this client).
+  m_devToolsRegistration = browser->GetHost()->AddDevToolsMessageObserver(this);
   if (m_view)
     m_view->cefAfterCreated();
   else
@@ -169,6 +317,7 @@ bool CefQmlClient::DoClose(CefRefPtr<CefBrowser>) {
 }
 
 void CefQmlClient::OnBeforeClose(CefRefPtr<CefBrowser>) {
+  m_devToolsRegistration = nullptr;
   m_browser = nullptr;
   if (m_view)
     m_view->cefBeforeClose();
