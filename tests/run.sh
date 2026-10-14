@@ -31,6 +31,10 @@ export CEF_QML_CACHE_DIR="$tmp/profile"
 export CEF_QML_TEST_DIR="$tmp/data"
 mkdir -p "$CEF_QML_TEST_DIR/test-hotreload" "$CEF_QML_TEST_DIR/test-downloads"
 export QML_XHR_ALLOW_FILE_WRITE=1 QML_XHR_ALLOW_FILE_READ=1
+# Fake camera and microphone, so getUserMedia() reaches the permission
+# handlers (tst_sitesettings). Not --use-fake-ui-for-media-stream: that
+# would grant every media request before CefQml sees it.
+export CEF_QML_FLAGS="--use-fake-device-for-media-stream${CEF_QML_FLAGS:+ $CEF_QML_FLAGS}"
 
 # Local HTTP server for suites that need real (non-opaque) origins:
 # TEST_HTTP_ORIGIN=http://127.0.0.1:<port>. Without python3 the variable stays
