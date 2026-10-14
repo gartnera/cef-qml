@@ -6,11 +6,22 @@ import CefQml
 // background tabs wait until their tab is shown.
 //
 //   RequestOverlay { anchors.fill: tabs; tabs: tabs }
+//
+// Permission cards have a "Remember this decision" checkbox. A remembered
+// decision is stored per permission for the requesting origin in
+// tabs.siteSettings (which then answers later requests itself, also after a
+// restart), or without one in `decisions` for this session.
 Item {
     id: overlay
     required property WebTabs tabs
-    // Remember permission decisions per origin+permission for this session.
+    // Offer the "Remember this decision" checkbox; false: never remember.
     property bool rememberPermissions: true
+    // Initial state of the checkbox on every permission card.
+    property bool rememberByDefault: true
+    // The checkbox of the card shown now.
+    property bool remember: rememberByDefault
+    // Session memory used without tabs.siteSettings: "origin|permissions" ->
+    // true (allowed) / false (blocked).
     property var decisions: ({})
 
     // [{ view, request, kind: "dialog" | "permission" }]
@@ -52,11 +63,26 @@ Item {
         queue = queue.filter(e => e.request !== request)
     }
 
+    // Stores a decision when the checkbox is on.
+    function _remember(request, allowed) {
+        if (!rememberPermissions || !remember) return
+        const sites = tabs.siteSettings
+        if (sites) {
+            const origin = sites.originOf(request.origin)
+            if (origin) {
+                for (const p of request.permissions)
+                    if (p !== "other") sites.set(origin, p, allowed ? "allow" : "block")
+                return
+            }
+        }
+        decisions[_key(request)] = allowed
+    }
+
     function accept() {
         const e = active
         if (!e) return
         if (e.kind === "permission") {
-            if (rememberPermissions) decisions[_key(e.request)] = true
+            _remember(e.request, true)
             e.request.grant()
         } else {
             e.request.accept(promptInput.text)
@@ -67,7 +93,7 @@ Item {
         const e = active
         if (!e) return
         if (e.kind === "permission") {
-            if (rememberPermissions) decisions[_key(e.request)] = false
+            _remember(e.request, false)
             e.request.deny()
         } else {
             e.request.reject()
@@ -75,8 +101,19 @@ Item {
         e.view.forceActiveFocus()
     }
 
+    // Escape: closes a permission card without deciding (nothing is
+    // remembered; the page may ask again), cancels a dialog.
+    function dismiss() {
+        const e = active
+        if (!e) return
+        if (e.kind !== "permission") { reject(); return }
+        e.request.dismiss()
+        e.view.forceActiveFocus()
+    }
+
     onActiveChanged: if (active) {
         promptInput.text = active.kind === "dialog" ? active.request.defaultText : ""
+        remember = rememberByDefault
         Qt.callLater(card.focusDefault)
     }
 
@@ -111,7 +148,7 @@ Item {
         }
         Keys.onReturnPressed: overlay.accept()
         Keys.onEnterPressed: overlay.accept()
-        Keys.onEscapePressed: overlay.reject()
+        Keys.onEscapePressed: overlay.dismiss()
 
         Column {
             id: content
@@ -173,6 +210,44 @@ Item {
                     font.family: Style.fontFamily
                     onAccepted: overlay.accept()
                     Keys.onEscapePressed: overlay.reject()
+                }
+            }
+            Item {
+                id: rememberBox
+                objectName: "rememberCheckBox"
+                visible: card.isPermission && overlay.rememberPermissions
+                width: parent.width
+                height: 22
+                readonly property bool checked: overlay.remember
+                function toggle() { overlay.remember = !overlay.remember }
+                Rectangle {
+                    id: box
+                    anchors.verticalCenter: parent.verticalCenter
+                    width: 16; height: 16
+                    radius: 3
+                    color: rememberBox.checked ? Style.accent : "transparent"
+                    border.color: rememberBox.checked ? Style.accent : Style.textDim
+                    Text {
+                        anchors.centerIn: parent
+                        visible: rememberBox.checked
+                        text: "\u2713"
+                        color: "white"
+                        font.pixelSize: 12
+                        font.bold: true
+                    }
+                }
+                Text {
+                    anchors.left: box.right; anchors.leftMargin: 8
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: "Remember this decision"
+                    color: Style.text
+                    font.pixelSize: Style.fontSize
+                    font.family: Style.fontFamily
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: rememberBox.toggle()
                 }
             }
             Row {

@@ -48,6 +48,75 @@ Item {
         _attachedHistory = historyStore
     }
 
+    // A SiteSettings that every tab follows, or null:
+    // - remembered permission decisions ("allow" / "block") answer requests
+    //   before permissionRequested is emitted; "ask" goes on to
+    //   permissionRequested when interceptPermissions is set, else the
+    //   request is dismissed
+    // - "javascript", "images", "popups" and permission decisions are pushed
+    //   into Chromium before every navigation (SiteSettings.apply)
+    // - with zoomPolicy "origin", zoom is remembered per site
+    property var siteSettings: null
+    // "origin": a tab takes its site's zoom on every navigation, and zooming
+    // a tab stores the zoom for its site and applies it to the site's other
+    // tabs (as Chrome does). "tab": every tab keeps its own zoomFactor
+    // across navigations; the store is not used for zoom.
+    property string zoomPolicy: "origin"
+    property bool _applyingZoom: false
+    property bool _storingZoom: false
+    onSiteSettingsChanged: _syncSiteSettings()
+    onZoomPolicyChanged: _syncSiteSettings()
+
+    function _syncSiteSettings() {
+        for (const v of views) {
+            if (siteSettings) siteSettings.apply(v.url)
+            _restoreZoom(v, v.url)
+        }
+    }
+    function _restoreZoom(view, url) {
+        if (!siteSettings || zoomPolicy !== "origin" || _storingZoom) return
+        // Pages without an origin of their own (about:, data:) keep the
+        // tab's zoom.
+        if (!siteSettings.originOf(url)) return
+        const z = Number(siteSettings.effective(url, "zoom"))
+        if (!(z > 0) || Math.abs(z - view.zoomFactor) < 1e-6) return
+        _applyingZoom = true
+        view.zoomFactor = z
+        _applyingZoom = false
+    }
+    function _storeZoom(view) {
+        if (_applyingZoom || !siteSettings || zoomPolicy !== "origin") return
+        const origin = siteSettings.originOf(view.url)
+        if (!origin) return
+        const zoom = view.zoomFactor
+        _storingZoom = true
+        // Store nothing when the zoom is what the site gets anyway (default,
+        // host or pattern scope).
+        siteSettings.reset(origin, "zoom")
+        if (Math.abs(Number(siteSettings.effective(view.url, "zoom")) - zoom) > 1e-6)
+            siteSettings.set(origin, "zoom", zoom)
+        _storingZoom = false
+        for (const v of views)
+            if (v !== view && siteSettings.originOf(v.url) === origin) _restoreZoom(v, v.url)
+    }
+    function _answerPermission(view, request) {
+        if (siteSettings) {
+            const decision = siteSettings.decide(request.origin, request.permissions)
+            if (decision === "allow") { request.grant(); return }
+            if (decision === "block") { request.deny(); return }
+        }
+        if (interceptPermissions) permissionRequested(view, request)
+        else request.dismiss()
+    }
+    Connections {
+        target: tabs.siteSettings
+        ignoreUnknownSignals: true
+        function onChanged(scope, key) {
+            if (key === "zoom" || key === "")
+                for (const v of tabs.views) tabs._restoreZoom(v, v.url)
+        }
+    }
+
     // When enabled, the matching request of every tab is forwarded through
     // the signals below instead of CEF's default handling.
     property bool interceptJavaScriptDialogs: false
@@ -215,6 +284,10 @@ Item {
         view.zoomFactorChanged.connect(tabs.sessionChanged)
         view.audioMutedChanged.connect(tabs.sessionChanged)
         view.discardedChanged.connect(tabs.sessionChanged)
+        view.navigationRequested.connect(url => { if (tabs.siteSettings) tabs.siteSettings.apply(url) })
+        view.loadStarted.connect(url => tabs._restoreZoom(view, url))
+        view.zoomFactorChanged.connect(() => tabs._storeZoom(view))
+        _restoreZoom(view, view.url)
         view.newWindowRequested.connect((url, userGesture, background) => {
             if (tabs.openPopupsInNewTabs)
                 tabs.openTab(url, background, tabs.indexOf(view) + 1)
@@ -236,8 +309,23 @@ Item {
         }
         forward("interceptJavaScriptDialogs", view.javaScriptDialogRequested,
                 { fn: d => tabs.javaScriptDialogRequested(view, d) })
-        forward("interceptPermissions", view.permissionRequested,
-                { fn: r => tabs.permissionRequested(view, r) })
+        // Permission requests are also handled while siteSettings is set
+        // (remembered decisions).
+        const permissions = { connected: false, fn: r => tabs._answerPermission(view, r) }
+        const updatePermissions = () => {
+            const on = tabs.interceptPermissions || !!tabs.siteSettings
+            try {
+                if (on && !permissions.connected) view.permissionRequested.connect(permissions.fn)
+                else if (!on && permissions.connected) view.permissionRequested.disconnect(permissions.fn)
+                permissions.connected = on
+            } catch (e) {  // the tab is gone
+                tabs.interceptPermissionsChanged.disconnect(updatePermissions)
+                tabs.siteSettingsChanged.disconnect(updatePermissions)
+            }
+        }
+        tabs.interceptPermissionsChanged.connect(updatePermissions)
+        tabs.siteSettingsChanged.connect(updatePermissions)
+        updatePermissions()
         forward("interceptFileDialogs", view.fileDialogRequested,
                 { fn: r => tabs.fileDialogRequested(view, r) })
         forward("interceptDownloads", view.downloadRequested,
