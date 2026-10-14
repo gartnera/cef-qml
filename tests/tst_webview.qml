@@ -226,6 +226,9 @@ Item {
         function test_15_find() {
             view.loadHtml("<title>f</title><p>apple banana apple cherry apple</p>")
             tryCompare(view, "title", "f", 10000)
+            // The title arrives before the load finishes; a find started
+            // while the navigation is still settling can end with 0 matches.
+            tryCompare(view, "loading", false, 10000)
             findSpy.clear()
             const lastFinal = () => {
                 for (let i = findSpy.count - 1; i >= 0; --i)

@@ -53,6 +53,19 @@ case $mode in
     # TextInput then crashes. The compose input context sidesteps it.
     export QT_IM_MODULE=${QT_IM_MODULE:-compose}
     unset DISPLAY
+    # QtWayland < 6.5.1 frees the wl_display before destroying its frame
+    # event queue (~QWaylandDisplay: wl_display_disconnect, then
+    # wl_event_queue_destroy, which locks the freed display's mutex; fixed
+    # upstream by qtwayland a76bf824 "Destroy frame queue before display").
+    # The stale mutex is harmless with plain glibc malloc, but meson sets
+    # MALLOC_PERTURB_, which fills freed memory with a random byte: then any
+    # Qt Wayland client (with or without CefQml) hangs or aborts in
+    # pthread_mutex_lock after its last test has passed. Do not perturb the
+    # Wayland client on affected Qt versions; the offscreen suite keeps it.
+    qtver=$(qtpaths6 --qt-version 2>/dev/null || qtpaths --qt-version 2>/dev/null || echo 0)
+    if [ "$(printf '%s\n' 6.5.1 "$qtver" | sort -V | head -n1)" != 6.5.1 ]; then
+      unset MALLOC_PERTURB_
+    fi
     ;;
   *) echo "unknown mode $mode" >&2; exit 2 ;;
 esac

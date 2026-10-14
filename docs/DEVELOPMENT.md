@@ -100,6 +100,14 @@ signal kills the process the default way.
   (override: `CEF_QML_ALLOW_MALLOC_REPLACEMENT=1`).
 - Qt 6.4 QtWayland crashes in `TextInput` when the compositor lacks a
   text-input protocol; tests set `QT_IM_MODULE=compose`.
+- QtWayland < 6.5.1 `~QWaylandDisplay` calls `wl_display_disconnect` before
+  `wl_event_queue_destroy` (use-after-free; upstream fix a76bf824). Under
+  meson's `MALLOC_PERTURB_` every Qt Wayland client, even without CefQml,
+  then hangs or aborts at exit (`tpp.c:83`, `pthread_mutex_lock.c:450`) after
+  all tests passed. `tests/run.sh` unsets `MALLOC_PERTURB_` for the wayland
+  mode on affected Qt. CEF is not involved: `CefShutdown` (post routine) runs
+  at the top of `~QGuiApplication`, before the platform integration dies.
+- Wait for `loading == false`, not just the title, before `find()` in tests.
 - QML: a `Loader` property named `item` shadows `Loader.item`; ambiguous
   `Shortcut` sequences (the same keys bound twice) never fire.
 - XMLHttpRequest file writes in tests are asynchronous; wait for `DONE`.
