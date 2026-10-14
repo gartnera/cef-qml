@@ -5,6 +5,7 @@
 #include "keymap.h"
 
 #include <QClipboard>
+#include <QDateTime>
 #include <QCursor>
 #include <QGuiApplication>
 #include <QInputMethod>
@@ -24,6 +25,7 @@
 #include <cstring>
 
 #include "include/cef_browser.h"
+#include "include/cef_navigation_entry.h"
 
 Q_DECLARE_LOGGING_CATEGORY(lcCef)
 
@@ -144,6 +146,36 @@ Qt::CursorShape cursorShape(int type) {
   }
 }
 
+class HistoryVisitor : public CefNavigationEntryVisitor {
+ public:
+  QVariantList entries;
+
+  bool Visit(CefRefPtr<CefNavigationEntry> entry, bool current, int, int) override {
+    if (!entry || !entry->IsValid())
+      return true;
+    QVariantMap e{
+        {QStringLiteral("url"), QUrl(QString::fromStdU16String(entry->GetURL().ToString16()))},
+        {QStringLiteral("title"), QString::fromStdU16String(entry->GetTitle().ToString16())},
+        {QStringLiteral("displayUrl"),
+         QString::fromStdU16String(entry->GetDisplayURL().ToString16())},
+        {QStringLiteral("httpStatusCode"), entry->GetHttpStatusCode()},
+        {QStringLiteral("current"), current},
+    };
+    // CefBaseTime: microseconds since 1601-01-01 UTC; 0 when not completed.
+    const int64_t us = entry->GetCompletionTime().val;
+    if (us > 0) {
+      constexpr int64_t kUnixEpochUs = INT64_C(11644473600000000);
+      e.insert(QStringLiteral("time"),
+               QDateTime::fromMSecsSinceEpoch((us - kUnixEpochUs) / 1000, Qt::UTC));
+    }
+    entries.append(e);
+    return true;
+  }
+
+ private:
+  IMPLEMENT_REFCOUNTING(HistoryVisitor);
+};
+
 }  // namespace
 
 CefWebView::CefWebView(QQuickItem* parent) : QQuickItem(parent) {
@@ -166,7 +198,73 @@ CefWebView::~CefWebView() {
 
 void CefWebView::componentComplete() {
   QQuickItem::componentComplete();
-  createBrowser();
+  if (!m_discarded)
+    createBrowser();
+}
+
+void CefWebView::setDiscarded(bool discarded) {
+  if (discarded == m_discarded)
+    return;
+  m_discarded = discarded;
+  if (discarded)
+    releaseBrowser();
+  else if (isComponentComplete())
+    createBrowser();
+  Q_EMIT discardedChanged();
+}
+
+// Closes the browser but keeps the view's identity (url, title, icon, zoom,
+// mute, user scripts). DevTools calls and pending requests belonged to the
+// old browser and are dropped, as when a browser closes on its own.
+void CefWebView::releaseBrowser() {
+  if (m_client) {
+    m_client->detachView();
+    m_client->closeBrowser(true);
+    m_client = nullptr;
+  }
+  for (auto* r : findChildren<CefJavaScriptDialog*>(Qt::FindDirectChildrenOnly))
+    delete r;
+  for (auto* r : findChildren<CefPermissionRequest*>(Qt::FindDirectChildrenOnly))
+    delete r;
+  for (auto* r : findChildren<CefFileDialogRequest*>(Qt::FindDirectChildrenOnly))
+    delete r;
+  m_devToolsCallbacks.clear();
+  m_devToolsQueue.clear();
+  m_userScriptIds.clear();
+  m_internalScriptsInstalled = false;
+  m_deferredStartUrl.clear();
+  m_pendingLoad.clear();
+  m_bootstrapping = false;
+  m_dropInitialHistoryEntry = false;
+  m_historyResetInFlight = false;
+  m_editableFocused = false;
+  setFlag(ItemAcceptsInputMethod, false);
+
+  m_view = QImage();
+  m_popup = QImage();
+  m_popupVisible = false;
+  m_popupRect = m_popupOriginalRect = QRect();
+  update();
+
+  if (m_loading) {
+    m_loading = false;
+    Q_EMIT loadingChanged();
+  }
+  if (m_loadProgress != 0) {
+    m_loadProgress = 0;
+    Q_EMIT loadProgressChanged();
+  }
+  if (m_canGoBack || m_canGoForward) {
+    m_canGoBack = m_canGoForward = false;
+    Q_EMIT navigationStateChanged();
+  }
+  cefStatusMessage(QString());
+  cefTooltip(QString());
+  cefFullscreen(false);
+  if (m_ready) {
+    m_ready = false;
+    Q_EMIT readyChanged();
+  }
 }
 
 void CefWebView::createBrowser() {
@@ -341,8 +439,10 @@ void CefWebView::cefPopupSize(const QRect& rect) {
 
 QSGNode* CefWebView::updatePaintNode(QSGNode* old, UpdatePaintNodeData*) {
   auto* root = static_cast<RootNode*>(old);
-  if (m_view.isNull())
-    return root;
+  if (m_view.isNull()) {
+    delete root;  // discarded: show nothing rather than a stale frame
+    return nullptr;
+  }
   if (!root)
     root = new RootNode;
 
@@ -480,13 +580,61 @@ void CefWebView::goForward() {
 }
 
 void CefWebView::reload() {
+  if (m_discarded) {
+    setDiscarded(false);
+    return;
+  }
   if (m_client && m_client->browser())
     m_client->browser()->Reload();
 }
 
 void CefWebView::reloadIgnoringCache() {
+  if (m_discarded) {
+    setDiscarded(false);
+    return;
+  }
   if (m_client && m_client->browser())
     m_client->browser()->ReloadIgnoreCache();
+}
+
+QVariantList CefWebView::navigationHistory() const {
+  auto h = host();
+  if (!h || m_bootstrapping)
+    return {};
+  CefRefPtr<HistoryVisitor> visitor = new HistoryVisitor;
+  h->GetNavigationEntries(visitor, false);  // visits synchronously
+  QVariantList entries = std::move(visitor->entries);
+  // The about:blank bootstrap entry, until it is reset away.
+  if (m_dropInitialHistoryEntry && entries.size() > 1 &&
+      entries.first().toMap().value(QStringLiteral("url")).toUrl() ==
+          QUrl(QStringLiteral("about:blank")))
+    entries.removeFirst();
+  return entries;
+}
+
+bool CefWebView::goToHistoryEntry(int index) {
+  const QVariantList entries = navigationHistory();
+  if (index < 0 || index >= entries.size())
+    return false;
+  const int count = int(entries.size());
+  // DevTools lists the same entries (possibly with the bootstrap one in
+  // front): match from the end.
+  sendDevTools(QStringLiteral("Page.getNavigationHistory"), {},
+               [this, index, count](bool ok, const QJsonValue& r) {
+                 if (!ok)
+                   return;
+                 const QJsonObject obj = r.toObject();
+                 const QJsonArray all = obj.value(QStringLiteral("entries")).toArray();
+                 const int i = int(all.size()) - count + index;
+                 if (i < 0 || i >= all.size() ||
+                     i == obj.value(QStringLiteral("currentIndex")).toInt(-1))
+                   return;
+                 sendDevTools(QStringLiteral("Page.navigateToHistoryEntry"),
+                              {{QStringLiteral("entryId"),
+                                all.at(i).toObject().value(QStringLiteral("id")).toInt()}},
+                              nullptr);
+               });
+  return true;
 }
 
 void CefWebView::stop() {
@@ -781,6 +929,20 @@ void CefWebView::cefAddressChange(const QUrl& url) {
   Q_EMIT urlChanged();
 }
 
+void CefWebView::setTitle(const QString& title) {
+  if (title == m_title)
+    return;
+  m_title = title;
+  Q_EMIT titleChanged();
+}
+
+void CefWebView::setIcon(const QUrl& icon) {
+  if (icon == m_icon)
+    return;
+  m_icon = icon;
+  Q_EMIT iconChanged();
+}
+
 void CefWebView::cefTitleChange(const QString& title) {
   if (m_bootstrapping)
     return;
@@ -791,7 +953,7 @@ void CefWebView::cefTitleChange(const QString& title) {
 }
 
 void CefWebView::cefIconChange(const QUrl& icon) {
-  if (icon == m_icon)
+  if (m_bootstrapping || icon == m_icon)
     return;
   m_icon = icon;
   Q_EMIT iconChanged();

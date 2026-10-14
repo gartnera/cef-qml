@@ -59,6 +59,9 @@ class CefContext : public QObject {
   // *configured* profile, so a second instance that had to fall back to a
   // throwaway Chromium profile still sees the same app data.
   QString dataDir();
+  // True when profileDir() is a throwaway fallback (another process holds
+  // the configured profile).
+  bool temporaryProfile() { return profileDir() != configuredCacheDir(); }
 
   // Chromium --ozone-platform value chosen for this process.
   QString ozonePlatform() const { return m_ozonePlatform; }

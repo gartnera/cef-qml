@@ -56,6 +56,10 @@ QString CefGlobal::dataDir() const {
   return CefContext::instance()->dataDir();
 }
 
+bool CefGlobal::temporaryProfile() const {
+  return CefContext::instance()->temporaryProfile();
+}
+
 QUrl CefGlobal::urlFromUserInput(const QString& input) const {
   const QString text = input.trimmed();
   if (text.isEmpty())

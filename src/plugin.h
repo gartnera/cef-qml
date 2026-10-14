@@ -14,6 +14,9 @@ class CefGlobal : public QObject {
   Q_PROPERTY(QString profileDir READ profileDir CONSTANT)
   // Directory for the app's own data (JsonStore files): "<profile>/cefqml".
   Q_PROPERTY(QString dataDir READ dataDir CONSTANT)
+  // True when another process holds the configured profile and this one runs
+  // on a throwaway Chromium profile (dataDir is still the shared one).
+  Q_PROPERTY(bool temporaryProfile READ temporaryProfile CONSTANT)
   // All downloads of this process (CefDownload objects), oldest first.
   Q_PROPERTY(QList<QObject*> downloads READ downloads NOTIFY downloadsChanged)
 
@@ -27,6 +30,7 @@ class CefGlobal : public QObject {
   QString runtimeDir() const;
   QString profileDir() const;
   QString dataDir() const;
+  bool temporaryProfile() const;
 
   // What a browser address bar does with typed text: "example.com" ->
   // "https://example.com", "/tmp/x.html" -> file URL. Returns an invalid URL

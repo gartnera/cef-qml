@@ -28,8 +28,10 @@ class CefWebView : public QQuickItem {
   Q_OBJECT
 
   Q_PROPERTY(QUrl url READ url WRITE setUrl NOTIFY urlChanged)
-  Q_PROPERTY(QString title READ title NOTIFY titleChanged)
-  Q_PROPERTY(QUrl icon READ icon NOTIFY iconChanged)
+  // The page's title and favicon. Writable as placeholders (e.g. for a
+  // restored or discarded tab); the page's own values replace them.
+  Q_PROPERTY(QString title READ title WRITE setTitle NOTIFY titleChanged)
+  Q_PROPERTY(QUrl icon READ icon WRITE setIcon NOTIFY iconChanged)
   Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
   Q_PROPERTY(double loadProgress READ loadProgress NOTIFY loadProgressChanged)
   Q_PROPERTY(bool canGoBack READ canGoBack NOTIFY navigationStateChanged)
@@ -50,6 +52,12 @@ class CefWebView : public QQuickItem {
   // JavaScript sources run in every document before the page's own scripts
   // (Page.addScriptToEvaluateOnNewDocument).
   Q_PROPERTY(QStringList userScripts READ userScripts WRITE setUserScripts NOTIFY userScriptsChanged)
+  // A discarded view has no browser (no process, no memory) but keeps url,
+  // title, icon, zoomFactor, audioMuted and userScripts. Declared true, the
+  // browser is not created until it is set to false; setting it to true
+  // closes a live browser (back/forward history and page state are lost).
+  // Setting it back to false (or reload()) loads `url` in a new browser.
+  Q_PROPERTY(bool discarded READ discarded WRITE setDiscarded NOTIFY discardedChanged)
 
  public:
   enum ConsoleLevel { Debug = 0, Info, Warning, Error };
@@ -61,7 +69,11 @@ class CefWebView : public QQuickItem {
   QUrl url() const { return m_url; }
   void setUrl(const QUrl& url);
   QString title() const { return m_title; }
+  void setTitle(const QString& title);
   QUrl icon() const { return m_icon; }
+  void setIcon(const QUrl& icon);
+  bool discarded() const { return m_discarded; }
+  void setDiscarded(bool discarded);
   bool loading() const { return m_loading; }
   double loadProgress() const { return m_loadProgress; }
   bool canGoBack() const { return m_canGoBack; }
@@ -86,6 +98,13 @@ class CefWebView : public QQuickItem {
 
   Q_INVOKABLE void goBack();
   Q_INVOKABLE void goForward();
+  // Back/forward list of this view, oldest first: [{url, title, displayUrl,
+  // httpStatusCode, time (Date or undefined), current}]. Empty while
+  // there is no browser.
+  Q_INVOKABLE QVariantList navigationHistory() const;
+  // Navigates to entry `index` of navigationHistory(). Returns false if
+  // there is no such entry.
+  Q_INVOKABLE bool goToHistoryEntry(int index);
   Q_INVOKABLE void reload();
   Q_INVOKABLE void reloadIgnoringCache();
   Q_INVOKABLE void stop();
@@ -131,6 +150,7 @@ class CefWebView : public QQuickItem {
   void readyChanged();
   void frameSwapped();
   void userScriptsChanged();
+  void discardedChanged();
   // DevTools protocol events. Enable a domain first, e.g.
   // devToolsMethod("Network.enable").
   void devToolsEvent(const QString& method, const QVariant& params);
@@ -190,6 +210,7 @@ class CefWebView : public QQuickItem {
   friend class CefQmlClient;
 
   void createBrowser();
+  void releaseBrowser();
   CefRefPtr<CefBrowserHost> host() const;
   void sendMouseClick(QMouseEvent* event, bool up, int clickCount);
   QPoint toBrowser(QPointF pos) const;
@@ -266,6 +287,7 @@ class CefWebView : public QQuickItem {
   int m_frameRate = 60;
   bool m_active = true;
   bool m_ready = false;
+  bool m_discarded = false;
   int m_frameCount = 0;
   bool m_editableFocused = false;
   QRect m_imeBounds;
