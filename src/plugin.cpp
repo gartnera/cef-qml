@@ -1,5 +1,6 @@
 #include "plugin.h"
 
+#include "bookmarkstore.h"
 #include "cefcontext.h"
 #include "cefwebview.h"
 #include "historystore.h"
@@ -105,6 +106,8 @@ void CefQmlPlugin::registerTypes(const char* uri) {
   qmlRegisterType<JsonStore>(uri, 1, 0, "JsonStore");
   qmlRegisterType<HistoryStore>(uri, 1, 0, "HistoryStore");
   qmlRegisterType<HistoryModel>(uri, 1, 0, "HistoryModel");
+  qmlRegisterType<BookmarkStore>(uri, 1, 0, "BookmarkStore");
+  qmlRegisterType<BookmarkModel>(uri, 1, 0, "BookmarkModel");
   const QString why = QStringLiteral("created by CefWebView");
   qmlRegisterUncreatableType<CefJavaScriptDialog>(uri, 1, 0, "CefJavaScriptDialog", why);
   qmlRegisterUncreatableType<CefPermissionRequest>(uri, 1, 0, "CefPermissionRequest", why);
