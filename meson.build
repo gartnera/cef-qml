@@ -41,11 +41,14 @@ if get_option('examples')
 endif
 
 run_tests = find_program('tests/run.sh')
-test('webview-offscreen', run_tests,
+test('offscreen', run_tests,
   args: [meson.project_build_root(), 'offscreen'],
   depends: [plugin, helper, stage_runtime],
   timeout: 300, is_parallel: false)
-test('webview-wayland', run_tests,
+# Headless weston has no seat, so windows never become active and window
+# shortcuts never fire; the browser suite (shortcut driven) runs offscreen.
+test('wayland', run_tests,
   args: [meson.project_build_root(), 'wayland'],
+  env: ['TEST_INPUT=' + meson.current_source_dir() / 'tests' / 'tst_webview.qml'],
   depends: [plugin, helper, stage_runtime],
   timeout: 300, is_parallel: false)

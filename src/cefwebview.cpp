@@ -199,6 +199,7 @@ void CefWebView::createBrowser() {
   // registering needs a live document; so start on about:blank, register,
   // then navigate (the about:blank entry is dropped from history after).
   m_deferredStartUrl = start;
+  m_bootstrapping = true;
   start = QUrl(QStringLiteral("about:blank"));
 
   if (!CefBrowserHost::CreateBrowser(windowInfo, m_client, cefstr(start.toString()),
@@ -378,6 +379,16 @@ QSGNode* CefWebView::updatePaintNode(QSGNode* old, UpdatePaintNodeData*) {
 // ---- properties ------------------------------------------------------------
 
 void CefWebView::loadInBrowser(const QUrl& url) {
+  if (m_bootstrapping) {
+    // Still on the about:blank bootstrap page: this becomes the first page.
+    m_deferredStartUrl = url;
+    return;
+  }
+  if (m_historyResetInFlight) {
+    // Page.resetNavigationHistory would cancel it; load once it is done.
+    m_pendingLoad = url;
+    return;
+  }
   if (m_client && m_client->browser())
     m_client->browser()->GetMainFrame()->LoadURL(cefstr(url.toString()));
 }
@@ -673,6 +684,7 @@ void CefWebView::applyUserScripts() {
     if (!m_deferredStartUrl.isValid())
       return;
     m_dropInitialHistoryEntry = true;
+    m_bootstrapping = false;
     loadInBrowser(std::exchange(m_deferredStartUrl, QUrl()));
   });
 }
@@ -711,7 +723,28 @@ CEF_QML_EDIT_COMMAND(redo, Redo)
 
 // ---- CEF -> QML state ------------------------------------------------------
 
+void CefWebView::cefLoadStart() {
+  if (!m_dropInitialHistoryEntry || m_bootstrapping)
+    return;
+  // The first real page has committed: forget the about:blank bootstrap
+  // entry so it cannot be navigated back to.
+  m_dropInitialHistoryEntry = false;
+  m_historyResetInFlight = true;
+  sendDevTools(QStringLiteral("Page.resetNavigationHistory"), {},
+               [this](bool, const QJsonValue&) {
+                 m_historyResetInFlight = false;
+                                if (m_pendingLoad.isValid())
+                   loadInBrowser(std::exchange(m_pendingLoad, QUrl()));
+                 if (m_client && m_client->browser()) {
+                   auto b = m_client->browser();
+                   cefLoadingStateChange(m_loading, b->CanGoBack(), b->CanGoForward());
+                 }
+               });
+}
+
 void CefWebView::cefAddressChange(const QUrl& url) {
+  if (m_bootstrapping)
+    return;
   if (url == m_url)
     return;
   m_url = url;
@@ -719,6 +752,8 @@ void CefWebView::cefAddressChange(const QUrl& url) {
 }
 
 void CefWebView::cefTitleChange(const QString& title) {
+  if (m_bootstrapping)
+    return;
   if (title == m_title)
     return;
   m_title = title;
@@ -733,20 +768,10 @@ void CefWebView::cefIconChange(const QUrl& icon) {
 }
 
 void CefWebView::cefLoadingStateChange(bool loading, bool canGoBack, bool canGoForward) {
+  if (m_bootstrapping)
+    return;  // about:blank bootstrap page, see createBrowser()
   if (m_dropInitialHistoryEntry)
-    canGoBack = false;  // only the about:blank bootstrap page is behind us
-  if (m_dropInitialHistoryEntry && !loading && m_url.toString() != QLatin1String("about:blank")) {
-    // The first real page has committed: forget the about:blank bootstrap
-    // entry (see createBrowser) so it cannot be navigated back to.
-    m_dropInitialHistoryEntry = false;
-    sendDevTools(QStringLiteral("Page.resetNavigationHistory"), {},
-                 [this](bool, const QJsonValue&) {
-                   if (m_client && m_client->browser()) {
-                     auto b = m_client->browser();
-                     cefLoadingStateChange(m_loading, b->CanGoBack(), b->CanGoForward());
-                   }
-                 });
-  }
+    canGoBack = false;
   if (loading != m_loading) {
     m_loading = loading;
     Q_EMIT loadingChanged();

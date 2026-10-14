@@ -1,5 +1,6 @@
 #!/bin/sh
 # Usage: tests/run.sh <builddir> <offscreen|wayland> [qmltestrunner args...]
+# TEST_INPUT selects a test file or directory (default: all tst_*.qml).
 #
 # offscreen: Qt offscreen platform, Chromium ozone "headless".
 # wayland:   starts a private headless Weston compositor and runs the tests as
@@ -54,7 +55,7 @@ case $mode in
 esac
 
 set +e
-${TEST_WRAPPER:-} "$runner" -input "$here/tst_webview.qml" "$@" >"$tmp/out.log" 2>&1
+${TEST_WRAPPER:-} "$runner" -input "${TEST_INPUT:-$here}" "$@" >"$tmp/out.log" 2>&1
 status=$?
 cat "$tmp/out.log"
 set -e

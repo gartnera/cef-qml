@@ -150,6 +150,8 @@ class CefQmlClient : public CefClient,
   // CefLoadHandler
   void OnLoadingStateChange(CefRefPtr<CefBrowser> browser, bool isLoading,
                             bool canGoBack, bool canGoForward) override;
+  void OnLoadStart(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
+                   TransitionType transitionType) override;
   void OnLoadEnd(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,
                  int httpStatusCode) override;
   void OnLoadError(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame,

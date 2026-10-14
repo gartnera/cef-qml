@@ -200,6 +200,7 @@ class CefWebView : public QQuickItem {
   void cefPopupShow(bool show);
   void cefPopupSize(const QRect& rect);
   void cefAddressChange(const QUrl& url);
+  void cefLoadStart();
   void cefTitleChange(const QString& title);
   void cefIconChange(const QUrl& icon);
   void cefLoadingStateChange(bool loading, bool canGoBack, bool canGoForward);
@@ -237,6 +238,8 @@ class CefWebView : public QQuickItem {
   QUrl m_pendingLoad;
   bool m_internalScriptsInstalled = false;
   bool m_dropInitialHistoryEntry = false;
+  bool m_bootstrapping = false;
+  bool m_historyResetInFlight = false;
 
   QUrl m_url;
   QString m_pendingHtml;

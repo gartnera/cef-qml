@@ -55,19 +55,35 @@ void CefQmlClient::OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame
 
 // ---- CefDevToolsMessageObserver --------------------------------------------
 
+// DevTools callbacks are delivered from the Qt event queue: handlers commonly
+// send further DevTools messages or navigate, which must not happen while CEF
+// is iterating its DevTools observers.
 void CefQmlClient::OnDevToolsMethodResult(CefRefPtr<CefBrowser>, int messageId, bool success,
                                           const void* result, size_t resultSize) {
-  if (m_view)
-    m_view->cefDevToolsResult(
-        messageId, success,
-        QByteArray(static_cast<const char*>(result), qsizetype(resultSize)));
+  if (!m_view)
+    return;
+  QByteArray json(static_cast<const char*>(result), qsizetype(resultSize));
+  QMetaObject::invokeMethod(
+      m_view.data(),
+      [view = m_view, messageId, success, json] {
+        if (view)
+          view->cefDevToolsResult(messageId, success, json);
+      },
+      Qt::QueuedConnection);
 }
 
 void CefQmlClient::OnDevToolsEvent(CefRefPtr<CefBrowser>, const CefString& method,
                                    const void* params, size_t paramsSize) {
-  if (m_view)
-    m_view->cefDevToolsEvent(
-        qstr(method), QByteArray(static_cast<const char*>(params), qsizetype(paramsSize)));
+  if (!m_view)
+    return;
+  QByteArray json(static_cast<const char*>(params), qsizetype(paramsSize));
+  QMetaObject::invokeMethod(
+      m_view.data(),
+      [view = m_view, m = qstr(method), json] {
+        if (view)
+          view->cefDevToolsEvent(m, json);
+      },
+      Qt::QueuedConnection);
 }
 
 // ---- CefDialogHandler ------------------------------------------------------
@@ -332,6 +348,12 @@ void CefQmlClient::OnLoadingStateChange(CefRefPtr<CefBrowser>, bool isLoading,
                                         bool canGoBack, bool canGoForward) {
   if (m_view)
     m_view->cefLoadingStateChange(isLoading, canGoBack, canGoForward);
+}
+
+void CefQmlClient::OnLoadStart(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
+                               TransitionType) {
+  if (m_view && frame->IsMain())
+    m_view->cefLoadStart();
 }
 
 void CefQmlClient::OnLoadEnd(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,

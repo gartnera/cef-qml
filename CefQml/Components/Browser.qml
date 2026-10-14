@@ -169,9 +169,11 @@ FocusScope {
     }
 
     // Keyboard shortcuts (window-wide, so they work while a page has focus).
+    // Note: listing the same keys twice (e.g. StandardKey.AddTab and "Ctrl+T")
+    // makes a Shortcut ambiguous and it never fires.
     component Key: Shortcut { context: Qt.WindowShortcut; enabled: browser.enabled && browser.visible }
-    Key { sequences: [StandardKey.AddTab, "Ctrl+T"]; onActivated: browser.newTab() }
-    Key { sequences: [StandardKey.Close, "Ctrl+W"]; onActivated: webTabs.closeTab() }
+    Key { sequences: ["Ctrl+T"]; onActivated: browser.newTab() }
+    Key { sequences: ["Ctrl+W", "Ctrl+F4"]; onActivated: webTabs.closeTab() }
     Key { sequences: ["Ctrl+L", "F6", "Alt+D"]; onActivated: navBar.addressField.focusAndSelect() }
     Key { sequences: ["Ctrl+Tab", "Ctrl+PgDown"]; onActivated: webTabs.currentIndex = (webTabs.currentIndex + 1) % webTabs.count }
     Key { sequences: ["Ctrl+Shift+Tab", "Ctrl+PgUp"]; onActivated: webTabs.currentIndex = (webTabs.currentIndex + webTabs.count - 1) % webTabs.count }
@@ -179,7 +181,7 @@ FocusScope {
     Key { sequences: ["Ctrl+Shift+R", "Shift+F5"]; onActivated: if (browser.currentView) browser.currentView.reloadIgnoringCache() }
     Key { sequences: ["Alt+Left"]; onActivated: if (browser.currentView) browser.currentView.goBack() }
     Key { sequences: ["Alt+Right"]; onActivated: if (browser.currentView) browser.currentView.goForward() }
-    Key { sequences: [StandardKey.Find]; onActivated: findBar.open() }
+    Key { sequences: ["Ctrl+F", "F3"]; onActivated: findBar.open() }
     Key { sequences: ["Ctrl+=", "Ctrl++"]; onActivated: if (browser.currentView) browser.currentView.zoomFactor += 0.1 }
     Key { sequences: ["Ctrl+-"]; onActivated: if (browser.currentView) browser.currentView.zoomFactor -= 0.1 }
     Key { sequences: ["Ctrl+0"]; onActivated: if (browser.currentView) browser.currentView.zoomFactor = 1 }
