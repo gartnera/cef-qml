@@ -65,6 +65,8 @@ class CefQmlClient : public CefClient,
                            CefRefPtr<CefMenuModel> model) override;
 
   // CefDevToolsMessageObserver
+  bool OnDevToolsMessage(CefRefPtr<CefBrowser> browser, const void* message,
+                         size_t messageSize) override;
   void OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser, int messageId, bool success,
                               const void* result, size_t resultSize) override;
   void OnDevToolsEvent(CefRefPtr<CefBrowser> browser, const CefString& method,

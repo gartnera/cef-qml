@@ -6,6 +6,8 @@
 #include <QQuickWindow>
 #include <QScreen>
 
+#include <string_view>
+
 #include "include/cef_task.h"
 
 namespace {
@@ -76,6 +78,36 @@ void CefQmlClient::OnBeforeContextMenu(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame
 // DevTools callbacks are delivered from the Qt event queue: handlers commonly
 // send further DevTools messages or navigate, which must not happen while CEF
 // is iterating its DevTools observers.
+// Messages of child sessions (Target.attachToTarget with flatten: the DevTools
+// frontend bridge, see CefWebView) end with a top-level ,"sessionId":"..."}:
+// Chromium appends it to the message. The view's own traffic uses the root
+// session and has none.
+bool CefQmlClient::OnDevToolsMessage(CefRefPtr<CefBrowser>, const void* message,
+                                     size_t messageSize) {
+  const std::string_view msg(static_cast<const char*>(message), messageSize);
+  constexpr std::string_view key = ",\"sessionId\":\"";
+  if (msg.size() < key.size() + 3 || msg.back() != '}' || msg[msg.size() - 2] != '"')
+    return false;
+  const size_t at = msg.rfind(key, msg.size() - 2);
+  if (at == std::string_view::npos)
+    return false;
+  const std::string_view session =
+      msg.substr(at + key.size(), msg.size() - 2 - (at + key.size()));
+  if (session.empty() || session.find_first_of("\"\\") != std::string_view::npos)
+    return false;
+  if (!m_view)
+    return true;
+  QMetaObject::invokeMethod(
+      m_view.data(),
+      [view = m_view, id = QString::fromLatin1(session.data(), qsizetype(session.size())),
+       json = QByteArray(msg.data(), qsizetype(msg.size()))] {
+        if (view)
+          view->cefDevToolsSessionMessage(id, json);
+      },
+      Qt::QueuedConnection);
+  return true;
+}
+
 void CefQmlClient::OnDevToolsMethodResult(CefRefPtr<CefBrowser>, int messageId, bool success,
                                           const void* result, size_t resultSize) {
   if (!m_view)
@@ -487,8 +519,12 @@ void CefQmlClient::OnVirtualKeyboardRequested(CefRefPtr<CefBrowser>,
 bool CefQmlClient::OnBeforeBrowse(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame> frame,
                                   CefRefPtr<CefRequest> request, bool userGesture,
                                   bool isRedirect) {
-  if (m_view && frame->IsMain())
-    m_view->cefBeforeBrowse(QUrl(qstr(request->GetURL())), userGesture, isRedirect);
+  if (m_view && frame->IsMain()) {
+    const QUrl url(qstr(request->GetURL()));
+    if (!m_view->cefAllowNavigation(url))
+      return true;  // cancel
+    m_view->cefBeforeBrowse(url, userGesture, isRedirect);
+  }
   return false;
 }
 
@@ -509,6 +545,8 @@ bool CefQmlClient::OnOpenURLFromTab(CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
 void CefQmlClient::OnRenderProcessTerminated(CefRefPtr<CefBrowser>,
                                              TerminationStatus status, int,
                                              const CefString&) {
-  if (m_view)
+  if (m_view) {
+    m_view->devToolsFrontendLost();
     Q_EMIT m_view->renderProcessTerminated(int(status));
+  }
 }

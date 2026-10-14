@@ -14,6 +14,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QQmlEngine>
+#include <QQmlInfo>
+#include <QTimer>
+#include <QUuid>
 #include <QLoggingCategory>
 #include <QQuickWindow>
 #include <QSGSimpleTextureNode>
@@ -212,6 +215,136 @@ class HistoryVisitor : public CefNavigationEntryVisitor {
   IMPLEMENT_REFCOUNTING(HistoryVisitor);
 };
 
+// ---- DevTools frontend bridge (see "DevTools" below) ----
+
+// Chromium's bundled DevTools frontend in "hosted" mode, told to connect
+// over a WebSocket at ws://<ws>. kDevToolsShim hands that WebSocket to the
+// bridge instead of the network.
+constexpr char kDevToolsFrontendUrl[] =
+    "devtools://devtools/bundled/devtools_app.html?ws=cefqml-devtools.invalid/page";
+// Runtime.addBinding name in frontend views: frontend -> host messages.
+constexpr char kDevToolsBinding[] = "cefqmlDevToolsSend";
+// Installed in frontend views. Payloads to the host: "o" (a socket opens),
+// "m<token> <message>", "c<token>" (the socket closes). The host answers
+// through window.__cefqmlDevTools: open(token, rootSessionId),
+// receive(token, [messages]) and close(token). The token is made by the
+// host and only handed to the main frame, so other frames that see the
+// binding cannot talk to the inspected page. Messages to the root session
+// get its sessionId added here, and lose it again on the way back.
+constexpr char kDevToolsShim[] = R"JS((() => {
+  if (location.protocol !== 'devtools:' || window.__cefqmlDevTools) return;
+  const send = window.cefqmlDevToolsSend;
+  if (typeof send !== 'function') return;
+  const NativeWebSocket = window.WebSocket;
+  const prefix = 'ws://cefqml-devtools.invalid/';
+  let socket = null;
+  class BridgeSocket extends EventTarget {
+    constructor(url) {
+      super();
+      Object.assign(this, {url, protocol: '', extensions: '', binaryType: 'blob',
+                           bufferedAmount: 0, readyState: 0, onopen: null,
+                           onmessage: null, onerror: null, onclose: null});
+      this._token = '';
+      this._root = '';
+      this._suffix = '';
+      if (socket) socket._closed(1000);
+      socket = this;
+      send('o');
+    }
+    _fire(event) {
+      this.dispatchEvent(event);
+      const handler = this['on' + event.type];
+      if (typeof handler === 'function') handler.call(this, event);
+    }
+    _open(token, root) {
+      this._token = token;
+      this._root = root;
+      this._suffix = ',"sessionId":"' + root + '"}';
+      this.readyState = 1;
+      this._fire(new Event('open'));
+    }
+    _message(data) {
+      if (this.readyState !== 1) return;
+      if (data.endsWith(this._suffix))
+        data = data.slice(0, data.length - this._suffix.length) + '}';
+      this._fire(new MessageEvent('message', {data}));
+    }
+    _closed(code) {
+      if (this.readyState === 3) return;
+      this.readyState = 3;
+      if (socket === this) socket = null;
+      this._fire(new CloseEvent('close', {code, wasClean: code === 1000}));
+    }
+    send(data) {
+      if (this.readyState !== 1) return;
+      const message = JSON.parse(data);
+      if (!message.sessionId) message.sessionId = this._root;
+      send('m' + this._token + ' ' + JSON.stringify(message));
+    }
+    close() {
+      if (this.readyState >= 2) return;
+      if (this._token) send('c' + this._token);
+      this._closed(1000);
+    }
+  }
+  for (const [k, v] of Object.entries({CONNECTING: 0, OPEN: 1, CLOSING: 2, CLOSED: 3}))
+    BridgeSocket[k] = BridgeSocket.prototype[k] = v;
+  window.WebSocket = new Proxy(NativeWebSocket, {
+    construct(target, args, newTarget) {
+      return String(args[0]).startsWith(prefix) ? new BridgeSocket(String(args[0]))
+                                                : Reflect.construct(target, args, newTarget);
+    }
+  });
+  Object.defineProperty(window, '__cefqmlDevTools', {value: Object.freeze({
+    open(token, root) {
+      if (!socket) return;
+      if (socket.readyState === 0) socket._open(token, root);
+      else socket._closed(1006);  // superseded: the frontend offers to reconnect
+    },
+    receive(token, messages) {
+      if (socket && socket._token === token)
+        for (const m of messages) socket._message(m);
+    },
+    close(token) {
+      if (socket && socket._token === token) socket._closed(1006);
+    },
+  })});
+})();)JS";
+
+// `data` (UTF-8) as a JavaScript string literal.
+QByteArray jsStringLiteral(const QByteArray& data) {
+  QByteArray out;
+  out.reserve(data.size() + 16);
+  out += '"';
+  for (const char c : data) {
+    const auto u = static_cast<unsigned char>(c);
+    if (c == '"' || c == '\\') {
+      out += '\\';
+      out += c;
+    } else if (u < 0x20) {
+      static const char hex[] = "0123456789abcdef";
+      out += "\\u00";
+      out += hex[u >> 4];
+      out += hex[u & 0xf];
+    } else {
+      out += c;
+    }
+  }
+  out += '"';
+  return out;
+}
+
+bool isProtocolToken(const QString& s) {
+  if (s.isEmpty() || s.size() > 128)
+    return false;
+  for (const QChar c : s) {
+    if (!(c.isLetterOrNumber() && c.unicode() < 128) && c != QLatin1Char('-') &&
+        c != QLatin1Char('_'))
+      return false;
+  }
+  return true;
+}
+
 }  // namespace
 
 CefWebView::CefWebView(QQuickItem* parent) : QQuickItem(parent) {
@@ -224,6 +357,8 @@ CefWebView::CefWebView(QQuickItem* parent) : QQuickItem(parent) {
 }
 
 CefWebView::~CefWebView() {
+  dropDevTools();              // as the inspected view
+  detachFromDevToolsTarget();  // as a frontend
   if (m_client) {
     m_client->detachView();
     m_client->closeBrowser(true);
@@ -253,6 +388,8 @@ void CefWebView::setDiscarded(bool discarded) {
 // mute, user scripts). DevTools calls and pending requests belonged to the
 // old browser and are dropped, as when a browser closes on its own.
 void CefWebView::releaseBrowser() {
+  dropDevTools();
+  devToolsFrontendLost();
   if (m_client) {
     m_client->detachView();
     m_client->closeBrowser(true);
@@ -347,6 +484,315 @@ void CefWebView::createBrowser() {
   }
 }
 
+// ---- DevTools ----------------------------------------------------------------
+//
+// A frontend view (devToolsFor set) is an ordinary browser showing Chromium's
+// bundled DevTools frontend. CefBrowserHost::ShowDevTools cannot be used: in
+// CEF 154 DevTools are always a Chrome-style native window (windowless
+// rendering is not supported for them). Instead the frontend is bridged to
+// the inspected browser in-process:
+//
+//   frontend page  --binding "m..."-->  frontend view  --SendDevToolsMessage-->
+//   inspected browser, child session S (Target.attachToTarget to itself,
+//   flatten)  --OnDevToolsMessage, ,"sessionId":"S..."}-->  inspected view
+//   --ExecuteJavaScript __cefqmlDevTools.receive-->  frontend page
+//
+// The frontend owns session S and the child sessions it attaches from there;
+// the view's own DevTools traffic (devToolsMethod, user scripts) stays on the
+// browser's root session. Detaching S on close resets everything the
+// frontend changed (breakpoints, pauses, overlays, enabled domains).
+
+void CefWebView::setDevToolsFor(CefWebView* view) {
+  if (view == this) {
+    qmlWarning(this) << "a CefWebView cannot inspect itself";
+    return;
+  }
+  if (view == m_devToolsFor)
+    return;
+  // The browser shows the previous target's frontend (or a page); a frontend
+  // gets a browser of its own, set up for the bridge from the start.
+  releaseBrowser();
+  detachFromDevToolsTarget();
+  if (view) {
+    m_devToolsFor = view;
+    m_devToolsTargetReady = connect(view, &CefWebView::readyChanged, this, [this] {
+      if (m_devToolsFor && m_devToolsFor->m_ready && m_devToolsConnectPending)
+        m_devToolsFor->devToolsConnect();
+    });
+    if (view->m_devToolsView)
+      view->dropDevTools();  // the newest frontend wins
+    view->setDevToolsView(this);
+  }
+  const QUrl url = view ? QUrl(QString::fromLatin1(kDevToolsFrontendUrl)) : QUrl();
+  if (url != m_url) {
+    m_url = url;
+    Q_EMIT urlChanged();
+  }
+  Q_EMIT devToolsForChanged();
+  if (view && isComponentComplete() && !m_discarded)
+    createBrowser();
+}
+
+void CefWebView::detachFromDevToolsTarget() {
+  disconnect(m_devToolsTargetReady);
+  devToolsFrontendLost();
+  CefWebView* target = m_devToolsFor;
+  m_devToolsFor = nullptr;
+  if (target && target->m_devToolsView == this) {
+    target->devToolsDisconnect();
+    target->setDevToolsView(nullptr);
+  }
+}
+
+// The frontend document's connection is gone (browser released or closed,
+// renderer crashed, view detached); a new document connects again.
+void CefWebView::devToolsFrontendLost() {
+  m_devToolsConnectPending = false;
+  m_devToolsOutbox.clear();
+  if (!m_devToolsToken.isEmpty()) {
+    m_devToolsToken.clear();
+    if (m_devToolsFor && m_devToolsFor->m_devToolsView == this)
+      m_devToolsFor->devToolsDisconnect();
+  }
+  setDevToolsConnected(false);
+}
+
+void CefWebView::setDevToolsView(CefWebView* view) {
+  if (m_devToolsView == view)
+    return;
+  m_devToolsView = view;
+  m_inspectNode = 0;
+  Q_EMIT devToolsChanged();
+}
+
+void CefWebView::setDevToolsConnected(bool connected) {
+  if (m_devToolsConnected == connected)
+    return;
+  m_devToolsConnected = connected;
+  Q_EMIT devToolsConnectedChanged();
+}
+
+// Inspected side: the DevTools of this view close (closeDevTools(), another
+// frontend taking over, or this view's browser going away).
+void CefWebView::dropDevTools() {
+  CefWebView* frontend = m_devToolsView;
+  if (!frontend)
+    return;
+  frontend->setDevToolsFor(nullptr);
+  if (!CefContext::instance()->isShuttingDown())
+    Q_EMIT frontend->closeRequested();
+}
+
+void CefWebView::closeDevTools() {
+  dropDevTools();
+}
+
+// Frontend side: a message from the frontend page (see kDevToolsShim).
+void CefWebView::devToolsBindingCalled(const QString& payload) {
+  CefWebView* target = m_devToolsFor;
+  if (!target || target->m_devToolsView != this || payload.isEmpty() ||
+      m_url.scheme() != QLatin1String("devtools"))
+    return;
+  const QChar op = payload.at(0);
+  if (op == QLatin1Char('o')) {
+    // A (new) frontend document connects; the previous connection is dropped.
+    devToolsFrontendLost();
+    m_devToolsToken = QString::fromLatin1(QUuid::createUuid().toRfc4122().toHex());
+    m_devToolsConnectPending = true;
+    target->devToolsConnect();
+    return;
+  }
+  const qsizetype space = payload.indexOf(QLatin1Char(' '));
+  const QString token = payload.mid(1, space < 0 ? -1 : space - 1);
+  if (m_devToolsToken.isEmpty() || token != m_devToolsToken)
+    return;
+  if (op == QLatin1Char('m') && space > 0 && m_devToolsConnected)
+    target->devToolsFromFrontend(payload.mid(space + 1).toUtf8());
+  else if (op == QLatin1Char('c'))
+    devToolsFrontendLost();
+}
+
+// Inspected side: opens the frontend's session once both ends are ready.
+void CefWebView::devToolsConnect() {
+  CefWebView* frontend = m_devToolsView;
+  if (!frontend || !frontend->m_devToolsConnectPending || !m_ready)
+    return;  // again on readyChanged
+  frontend->m_devToolsConnectPending = false;
+  devToolsDisconnect();
+  const int generation = m_devToolsGeneration;
+  const QString token = frontend->m_devToolsToken;
+  auto current = [this, generation, token] {
+    return generation == m_devToolsGeneration && m_devToolsView &&
+           m_devToolsView->m_devToolsToken == token;
+  };
+  sendDevTools(QStringLiteral("Target.getTargetInfo"), {},
+               [this, current](bool ok, const QJsonValue& r) {
+    if (!current())
+      return;
+    const QString targetId =
+        r[QLatin1String("targetInfo")][QLatin1String("targetId")].toString();
+    if (!ok || targetId.isEmpty()) {
+      qCWarning(lcCef) << "DevTools: Target.getTargetInfo failed" << r;
+      return;
+    }
+    sendDevTools(QStringLiteral("Target.attachToTarget"),
+                 {{QStringLiteral("targetId"), targetId}, {QStringLiteral("flatten"), true}},
+                 [this, current](bool ok, const QJsonValue& r) {
+      const QString session = r[QLatin1String("sessionId")].toString();
+      if (!current()) {
+        if (ok && !session.isEmpty())
+          sendDevTools(QStringLiteral("Target.detachFromTarget"),
+                       {{QStringLiteral("sessionId"), session}}, nullptr);
+        return;
+      }
+      if (!ok || !isProtocolToken(session)) {
+        qCWarning(lcCef) << "DevTools: Target.attachToTarget failed" << r;
+        return;
+      }
+      m_devToolsSession = session;
+      m_devToolsSessions = {session};
+      CefWebView* frontend = m_devToolsView;
+      frontend->runFrontendScript(
+          QStringLiteral("window.__cefqmlDevTools && __cefqmlDevTools.open('%1', '%2')")
+              .arg(frontend->m_devToolsToken, session));
+      frontend->setDevToolsConnected(true);
+    });
+  });
+}
+
+// Inspected side: ends the frontend's session.
+void CefWebView::devToolsDisconnect() {
+  ++m_devToolsGeneration;
+  if (!m_devToolsSession.isEmpty() && m_ready && !CefContext::instance()->isShuttingDown())
+    sendDevTools(QStringLiteral("Target.detachFromTarget"),
+                 {{QStringLiteral("sessionId"), m_devToolsSession}}, nullptr);
+  m_devToolsSession.clear();
+  m_devToolsSessions.clear();
+  m_devToolsOverlayEnableId = -1;
+  m_devToolsOverlayReady = false;
+}
+
+// Inspected side: a protocol message from the frontend, for its sessions only.
+void CefWebView::devToolsFromFrontend(const QByteArray& message) {
+  if (m_devToolsSession.isEmpty())
+    return;
+  const QJsonObject msg = QJsonDocument::fromJson(message).object();
+  const QString session = msg.value(QLatin1String("sessionId")).toString();
+  if (!m_devToolsSessions.contains(session))
+    return;  // never the view's own root session
+  if (session == m_devToolsSession &&
+      msg.value(QLatin1String("method")).toString() == QLatin1String("Overlay.enable"))
+    m_devToolsOverlayEnableId = msg.value(QLatin1String("id")).toInt(-1);
+  if (auto h = host())
+    h->SendDevToolsMessage(message.constData(), size_t(message.size()));
+}
+
+// Inspected side: a protocol message of a child session (from CefQmlClient).
+void CefWebView::cefDevToolsSessionMessage(const QString& session, const QByteArray& message) {
+  CefWebView* frontend = m_devToolsView;
+  if (!frontend || !m_devToolsSessions.contains(session))
+    return;
+  static const QByteArray attached = QByteArrayLiteral("{\"method\":\"Target.attachedToTarget\"");
+  static const QByteArray detached = QByteArrayLiteral("{\"method\":\"Target.detachedFromTarget\"");
+  if (message.startsWith(attached) || message.startsWith(detached)) {
+    const QString child = QJsonDocument::fromJson(message)
+                              .object()[QLatin1String("params")][QLatin1String("sessionId")]
+                              .toString();
+    if (message.startsWith(attached))
+      m_devToolsSessions.insert(child);
+    else if (child != m_devToolsSession)
+      m_devToolsSessions.remove(child);
+  }
+  frontend->devToolsQueueToFrontend(message);
+  if (session == m_devToolsSession && m_devToolsOverlayEnableId >= 0 &&
+      message.startsWith("{\"id\":" + QByteArray::number(m_devToolsOverlayEnableId) + ',')) {
+    // The frontend's overlay (and with it Elements) can now take
+    // Overlay.inspectNodeRequested.
+    m_devToolsOverlayEnableId = -1;
+    m_devToolsOverlayReady = true;
+    devToolsDeliverInspect();
+  }
+}
+
+void CefWebView::inspectElementAt(qreal x, qreal y) {
+  if (!m_ready || m_bootstrapping)
+    return;
+  // DOM.getNodeForLocation takes document coordinates in CSS pixels.
+  sendDevTools(QStringLiteral("Page.getLayoutMetrics"), {},
+               [this, x, y](bool ok, const QJsonValue& r) {
+    if (!ok)
+      return;
+    const QJsonValue vp = r[QLatin1String("cssVisualViewport")];
+    const double zoom = m_zoomFactor > 0 ? m_zoomFactor : 1.0;
+    const QVariantMap params{
+        {QStringLiteral("x"), int(std::floor(x / zoom + vp[QLatin1String("pageX")].toDouble()))},
+        {QStringLiteral("y"), int(std::floor(y / zoom + vp[QLatin1String("pageY")].toDouble()))},
+        {QStringLiteral("includeUserAgentShadowDOM"), false},
+        {QStringLiteral("ignorePointerEventsNone"), true}};
+    sendDevTools(QStringLiteral("DOM.getNodeForLocation"), params,
+                 [this](bool ok, const QJsonValue& r) {
+      const int node = r[QLatin1String("backendNodeId")].toInt();
+      if (!ok || !node || !m_devToolsView)
+        return;
+      m_inspectNode = node;
+      devToolsDeliverInspect();
+    });
+  });
+}
+
+// What Chromium's own "Inspect" does: the backend reports the node to the
+// frontend's overlay, which reveals it in the Elements panel.
+void CefWebView::devToolsDeliverInspect() {
+  if (!m_inspectNode || !m_devToolsOverlayReady || !m_devToolsView ||
+      m_devToolsSession.isEmpty())
+    return;
+  const QByteArray event =
+      "{\"method\":\"Overlay.inspectNodeRequested\",\"params\":{\"backendNodeId\":" +
+      QByteArray::number(std::exchange(m_inspectNode, 0)) + "},\"sessionId\":\"" +
+      m_devToolsSession.toLatin1() + "\"}";
+  m_devToolsView->devToolsQueueToFrontend(event);
+}
+
+// Frontend side: messages are batched per event loop pass.
+void CefWebView::devToolsQueueToFrontend(const QByteArray& message) {
+  if (m_devToolsToken.isEmpty())
+    return;
+  m_devToolsOutbox.append(message);
+  if (m_devToolsFlushScheduled)
+    return;
+  m_devToolsFlushScheduled = true;
+  QMetaObject::invokeMethod(this, &CefWebView::devToolsFlushToFrontend, Qt::QueuedConnection);
+}
+
+void CefWebView::devToolsFlushToFrontend() {
+  m_devToolsFlushScheduled = false;
+  if (m_devToolsOutbox.isEmpty() || m_devToolsToken.isEmpty())
+    return;
+  const auto messages = std::exchange(m_devToolsOutbox, {});
+  QByteArray js = "window.__cefqmlDevTools && __cefqmlDevTools.receive('" +
+                  m_devToolsToken.toLatin1() + "', [";
+  for (qsizetype i = 0; i < messages.size(); ++i) {
+    if (i)
+      js += ',';
+    js += jsStringLiteral(messages[i]);
+  }
+  js += "])";
+  runFrontendScript(QString::fromUtf8(js));
+}
+
+void CefWebView::runFrontendScript(const QString& script) {
+  if (m_client && m_client->browser())
+    m_client->browser()->GetMainFrame()->ExecuteJavaScript(cefstr(script), CefString(), 0);
+}
+
+bool CefWebView::cefAllowNavigation(const QUrl& url) const {
+  // A frontend view only ever shows DevTools: its binding talks to the
+  // inspected page.
+  if (!m_devToolsFor)
+    return true;
+  return url.scheme() == QLatin1String("devtools") || url == QUrl(QStringLiteral("about:blank"));
+}
+
 CefRefPtr<CefBrowserHost> CefWebView::host() const {
   if (!m_client || !m_client->browser())
     return nullptr;
@@ -382,6 +828,8 @@ void CefWebView::cefBeforeClose() {
     delete r;
   for (auto* r : findChildren<CefFileDialogRequest*>(Qt::FindDirectChildrenOnly))
     delete r;
+  dropDevTools();
+  devToolsFrontendLost();
   m_client = nullptr;
   m_devToolsCallbacks.clear();
   m_devToolsQueue.clear();
@@ -745,6 +1193,13 @@ void CefWebView::cefDevToolsResult(int id, bool success, const QByteArray& json)
 }
 
 void CefWebView::cefDevToolsEvent(const QString& method, const QByteArray& json) {
+  if (m_devToolsFor && method == QLatin1String("Runtime.bindingCalled")) {
+    const QJsonObject params = QJsonDocument::fromJson(json).object();
+    if (params.value(QLatin1String("name")).toString() == QLatin1String(kDevToolsBinding)) {
+      devToolsBindingCalled(params.value(QLatin1String("payload")).toString());
+      return;
+    }
+  }
   static const QMetaMethod sig = QMetaMethod::fromSignal(&CefWebView::devToolsEvent);
   if (isSignalConnected(sig))
     Q_EMIT devToolsEvent(method, QJsonDocument::fromJson(json).toVariant());
@@ -885,6 +1340,15 @@ void CefWebView::applyUserScripts() {
                  {{QStringLiteral("source"), QString::fromUtf8(kClipboardScript)}}, nullptr);
     sendDevTools(QStringLiteral("Page.addScriptToEvaluateOnNewDocument"),
                  {{QStringLiteral("source"), QString::fromUtf8(kFocusScript)}}, nullptr);
+    if (m_devToolsFor) {
+      // Bindings only reach new documents (here: the frontend, in its own
+      // process) while the Runtime domain is enabled.
+      sendDevTools(QStringLiteral("Runtime.enable"), {}, nullptr);
+      sendDevTools(QStringLiteral("Runtime.addBinding"),
+                   {{QStringLiteral("name"), QString::fromLatin1(kDevToolsBinding)}}, nullptr);
+      sendDevTools(QStringLiteral("Page.addScriptToEvaluateOnNewDocument"),
+                   {{QStringLiteral("source"), QString::fromUtf8(kDevToolsShim)}}, nullptr);
+    }
   }
   for (const QString& source : std::as_const(m_userScripts)) {
     sendDevTools(QStringLiteral("Page.addScriptToEvaluateOnNewDocument"),

@@ -31,6 +31,9 @@ class CefContext : public QObject {
   // Initializes CEF on first call. Returns false if CEF failed to start.
   bool ensureInitialized();
   bool isInitialized() const { return m_state == State::Running; }
+  // True from the start of shutdown(): browsers closing now are being torn
+  // down with the application, not closed by a page or the user.
+  bool isShuttingDown() const { return m_shuttingDown; }
 
   // Thread-safe; called from CefBrowserProcessHandler::OnScheduleMessagePumpWork.
   void scheduleWork(qint64 delayMs);
@@ -85,6 +88,7 @@ class CefContext : public QObject {
   static QString chooseCacheDir();
 
   State m_state = State::Uninitialized;
+  bool m_shuttingDown = false;
   std::atomic_bool m_acceptWork{false};
   QTimer m_timer;
   bool m_inWork = false;

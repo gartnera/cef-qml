@@ -3,6 +3,8 @@
 #include <QColor>
 #include <QHash>
 #include <QImage>
+#include <QPointer>
+#include <QSet>
 #include <QJSValue>
 #include <QJsonValue>
 #include <QVariant>
@@ -75,6 +77,23 @@ class CefWebView : public QQuickItem {
   // (["date-invalid", "authority-invalid", ...]), mixedContent (bool),
   // protocol ("TLS 1.3") }.
   Q_PROPERTY(QVariantMap certificate READ certificate NOTIFY securityChanged)
+  // DevTools. Set devToolsFor to another CefWebView to make this view the
+  // DevTools inspector of that view: it loads Chromium's bundled DevTools
+  // frontend, connected in-process to the inspected browser's DevTools
+  // protocol (no native window, no remote debugging port). A view is
+  // inspected by at most one frontend: when another view is set to inspect
+  // it, the previous frontend is released. A frontend emits closeRequested
+  // when its DevTools go away by themselves: closeDevTools() on the inspected
+  // view, another frontend taking over, or the inspected view's browser
+  // closing (tab closed, discarded). Setting devToolsFor to null releases the
+  // frontend's browser and leaves the view empty.
+  Q_PROPERTY(CefWebView* devToolsFor READ devToolsFor WRITE setDevToolsFor NOTIFY devToolsForChanged)
+  // On the inspected side: the view showing this view's DevTools, or null.
+  Q_PROPERTY(CefWebView* devToolsView READ devToolsView NOTIFY devToolsChanged)
+  Q_PROPERTY(bool hasDevTools READ hasDevTools NOTIFY devToolsChanged)
+  // On the frontend side: true while the frontend is connected to the
+  // inspected page.
+  Q_PROPERTY(bool devToolsConnected READ devToolsConnected NOTIFY devToolsConnectedChanged)
 
  public:
   enum ConsoleLevel { Debug = 0, Info, Warning, Error };
@@ -115,6 +134,11 @@ class CefWebView : public QQuickItem {
   bool editableFocused() const { return m_editableFocused; }
   bool secure() const { return m_secure; }
   QVariantMap certificate() const { return m_certificate; }
+  CefWebView* devToolsFor() const { return m_devToolsFor; }
+  void setDevToolsFor(CefWebView* view);
+  CefWebView* devToolsView() const { return m_devToolsView; }
+  bool hasDevTools() const { return m_devToolsView != nullptr; }
+  bool devToolsConnected() const { return m_devToolsConnected; }
 
   Q_INVOKABLE void goBack();
   Q_INVOKABLE void goForward();
@@ -167,6 +191,15 @@ class CefWebView : public QQuickItem {
   // defaults to the key's character for printable keys without Ctrl/Alt/Meta.
   Q_INVOKABLE void sendKey(int key, int modifiers = 0, const QString& text = QString());
 
+  // Closes this view's DevTools (see devToolsView): the frontend view is
+  // released and emits closeRequested. The page is not affected; breakpoints,
+  // highlights and other DevTools state are dropped with the session.
+  Q_INVOKABLE void closeDevTools();
+  // Reveals the element at (x, y) (item coordinates) in the Elements panel
+  // of this view's DevTools. DevTools must be open, or opened right after:
+  // the element is revealed once the frontend has connected.
+  Q_INVOKABLE void inspectElementAt(qreal x, qreal y);
+
  Q_SIGNALS:
   void urlChanged();
   void titleChanged();
@@ -188,6 +221,9 @@ class CefWebView : public QQuickItem {
   void discardedChanged();
   void editableFocusedChanged();
   void securityChanged();
+  void devToolsForChanged();
+  void devToolsChanged();
+  void devToolsConnectedChanged();
   // DevTools protocol events. Enable a domain first, e.g.
   // devToolsMethod("Network.enable").
   void devToolsEvent(const QString& method, const QVariant& params);
@@ -262,6 +298,23 @@ class CefWebView : public QQuickItem {
   qreal devicePixelRatio() const;
   void loadInBrowser(const QUrl& url);
   bool isBootstrapLoad(const QUrl& url) const;
+  // DevTools bridge, see "DevTools" in the .cpp.
+  void detachFromDevToolsTarget();
+  void setDevToolsView(CefWebView* view);
+  void dropDevTools();
+  void devToolsFrontendLost();
+  void setDevToolsConnected(bool connected);
+  void devToolsBindingCalled(const QString& payload);
+  void devToolsConnect();
+  void devToolsDisconnect();
+  void devToolsFromFrontend(const QByteArray& message);
+  void devToolsDeliverInspect();
+  void devToolsQueueToFrontend(const QByteArray& message);
+  void devToolsFlushToFrontend();
+  void runFrontendScript(const QString& script);
+  bool cefAllowNavigation(const QUrl& url) const;
+  // Called by CefQmlClient for protocol messages of child sessions.
+  void cefDevToolsSessionMessage(const QString& sessionId, const QByteArray& message);
   void resetInitialHistory();
 
   // Called by CefQmlClient (always on the GUI thread).
@@ -340,6 +393,24 @@ class CefWebView : public QQuickItem {
   bool m_secure = false;
   QVariantMap m_certificate;
   QRect m_imeBounds;
+
+  // DevTools frontend side.
+  QPointer<CefWebView> m_devToolsFor;
+  QMetaObject::Connection m_devToolsTargetReady;
+  QMetaObject::Connection m_devToolsTargetDestroyed;
+  QString m_devToolsToken;          // the frontend document's connection
+  bool m_devToolsConnectPending = false;
+  bool m_devToolsConnected = false;
+  QList<QByteArray> m_devToolsOutbox;
+  bool m_devToolsFlushScheduled = false;
+  // Inspected side.
+  QPointer<CefWebView> m_devToolsView;
+  QString m_devToolsSession;        // the frontend's root session
+  QSet<QString> m_devToolsSessions; // it and its child sessions
+  int m_devToolsGeneration = 0;
+  int m_devToolsOverlayEnableId = -1;
+  bool m_devToolsOverlayReady = false;
+  int m_inspectNode = 0;            // backendNodeId waiting for the frontend
 
   QImage m_view;
   QImage m_popup;

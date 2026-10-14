@@ -403,6 +403,7 @@ void CefContext::addDownload(CefDownload* download) {
 void CefContext::shutdown() {
   if (m_state != State::Running)
     return;
+  m_shuttingDown = true;
 
   // Every browser must be closed (OnBeforeClose) before CefShutdown().
   const auto clients = m_clients;
