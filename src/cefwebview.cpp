@@ -1,0 +1,757 @@
+#include "cefwebview.h"
+
+#include "cefclient.h"
+#include "cefcontext.h"
+#include "keymap.h"
+
+#include <QCursor>
+#include <QGuiApplication>
+#include <QInputMethod>
+#include <QLoggingCategory>
+#include <QQuickWindow>
+#include <QSGSimpleTextureNode>
+#include <QSGTexture>
+
+#include <cmath>
+#include <cstring>
+
+#include "include/cef_browser.h"
+
+Q_DECLARE_LOGGING_CATEGORY(lcCef)
+
+namespace {
+
+CefString cefstr(const QString& s) {
+  return CefString(s.toStdU16String());
+}
+
+class TextureNode : public QSGSimpleTextureNode {
+ public:
+  TextureNode() { setFiltering(QSGTexture::Linear); }
+  ~TextureNode() override { delete texture(); }
+
+  void setImage(QQuickWindow* window, const QImage& image, bool opaque) {
+    QQuickWindow::CreateTextureOptions opts;
+    if (opaque)
+      opts |= QQuickWindow::TextureIsOpaque;
+    QSGTexture* old = texture();
+    setTexture(window->createTextureFromImage(image, opts));
+    delete old;
+  }
+};
+
+class RootNode : public QSGNode {
+ public:
+  TextureNode* view = nullptr;
+  TextureNode* popup = nullptr;
+};
+
+constexpr double kZoomBase = 1.2;  // Chromium: factor = 1.2 ^ level
+
+Qt::CursorShape cursorShape(int type) {
+  switch (type) {
+    case CT_CROSS: return Qt::CrossCursor;
+    case CT_HAND: return Qt::PointingHandCursor;
+    case CT_IBEAM:
+    case CT_VERTICALTEXT: return Qt::IBeamCursor;
+    case CT_WAIT: return Qt::WaitCursor;
+    case CT_HELP: return Qt::WhatsThisCursor;
+    case CT_EASTRESIZE:
+    case CT_WESTRESIZE:
+    case CT_EASTWESTRESIZE:
+    case CT_COLUMNRESIZE:
+    case CT_EASTPANNING:
+    case CT_WESTPANNING:
+    case CT_MIDDLE_PANNING_HORIZONTAL: return Qt::SizeHorCursor;
+    case CT_NORTHRESIZE:
+    case CT_SOUTHRESIZE:
+    case CT_NORTHSOUTHRESIZE:
+    case CT_ROWRESIZE:
+    case CT_NORTHPANNING:
+    case CT_SOUTHPANNING:
+    case CT_MIDDLE_PANNING_VERTICAL: return Qt::SizeVerCursor;
+    case CT_NORTHEASTRESIZE:
+    case CT_SOUTHWESTRESIZE:
+    case CT_NORTHEASTSOUTHWESTRESIZE:
+    case CT_NORTHEASTPANNING:
+    case CT_SOUTHWESTPANNING: return Qt::SizeBDiagCursor;
+    case CT_NORTHWESTRESIZE:
+    case CT_SOUTHEASTRESIZE:
+    case CT_NORTHWESTSOUTHEASTRESIZE:
+    case CT_NORTHWESTPANNING:
+    case CT_SOUTHEASTPANNING: return Qt::SizeFDiagCursor;
+    case CT_MOVE:
+    case CT_MIDDLEPANNING: return Qt::SizeAllCursor;
+    case CT_PROGRESS: return Qt::BusyCursor;
+    case CT_NODROP:
+    case CT_NOTALLOWED:
+    case CT_DND_NONE: return Qt::ForbiddenCursor;
+    case CT_COPY:
+    case CT_DND_COPY: return Qt::DragCopyCursor;
+    case CT_ALIAS:
+    case CT_DND_LINK: return Qt::DragLinkCursor;
+    case CT_DND_MOVE: return Qt::DragMoveCursor;
+    case CT_GRAB: return Qt::OpenHandCursor;
+    case CT_GRABBING: return Qt::ClosedHandCursor;
+    case CT_NONE: return Qt::BlankCursor;
+    default: return Qt::ArrowCursor;
+  }
+}
+
+}  // namespace
+
+CefWebView::CefWebView(QQuickItem* parent) : QQuickItem(parent) {
+  setFlag(ItemHasContents, true);
+  setFlag(ItemIsFocusScope, true);
+  setActiveFocusOnTab(true);
+  setAcceptedMouseButtons(Qt::LeftButton | Qt::RightButton | Qt::MiddleButton |
+                          Qt::BackButton | Qt::ForwardButton);
+  setAcceptHoverEvents(true);
+}
+
+CefWebView::~CefWebView() {
+  if (m_client) {
+    m_client->detachView();
+    m_client->closeBrowser(true);
+  }
+}
+
+// ---- lifecycle -------------------------------------------------------------
+
+void CefWebView::componentComplete() {
+  QQuickItem::componentComplete();
+  createBrowser();
+}
+
+void CefWebView::createBrowser() {
+  if (m_client || !CefContext::instance()->ensureInitialized())
+    return;
+
+  m_client = new CefQmlClient(this);
+
+  CefWindowInfo windowInfo;
+  windowInfo.SetAsWindowless(0);
+
+  CefBrowserSettings settings;
+  settings.windowless_frame_rate = m_frameRate;
+  settings.background_color =
+      CefColorSetARGB(m_backgroundColor.alpha(), m_backgroundColor.red(),
+                      m_backgroundColor.green(), m_backgroundColor.blue());
+
+  QUrl start = m_url;
+  if (!m_pendingHtml.isEmpty()) {
+    start = QUrl(QStringLiteral("data:text/html;charset=utf-8;base64,") +
+                 QString::fromLatin1(m_pendingHtml.toUtf8().toBase64()));
+    m_pendingHtml.clear();
+  }
+  if (start.isEmpty())
+    start = QUrl(QStringLiteral("about:blank"));
+
+  if (!CefBrowserHost::CreateBrowser(windowInfo, m_client, cefstr(start.toString()),
+                                     settings, nullptr, nullptr)) {
+    qCWarning(lcCef) << "CefBrowserHost::CreateBrowser failed";
+  }
+}
+
+CefRefPtr<CefBrowserHost> CefWebView::host() const {
+  if (!m_client || !m_client->browser())
+    return nullptr;
+  return m_client->browser()->GetHost();
+}
+
+void CefWebView::cefAfterCreated() {
+  auto h = host();
+  if (!h)
+    return;
+  if (!qFuzzyCompare(m_zoomFactor, 1.0))
+    h->SetZoomLevel(std::log(m_zoomFactor) / std::log(kZoomBase));
+  if (m_audioMuted)
+    h->SetAudioMuted(true);
+  h->WasHidden(!isVisible() || !m_active);
+  if (hasActiveFocus())
+    h->SetFocus(true);
+  h->WasResized();
+  m_ready = true;
+  Q_EMIT readyChanged();
+}
+
+void CefWebView::cefBeforeClose() {
+  m_client = nullptr;
+  if (m_ready) {
+    m_ready = false;
+    Q_EMIT readyChanged();
+  }
+}
+
+qreal CefWebView::devicePixelRatio() const {
+  if (window())
+    return window()->effectiveDevicePixelRatio();
+  return qApp->devicePixelRatio();
+}
+
+QRect CefWebView::cefViewRect() const {
+  return QRect(0, 0, std::max(1, int(std::ceil(width()))),
+               std::max(1, int(std::ceil(height()))));
+}
+
+void CefWebView::geometryChange(const QRectF& newGeometry, const QRectF& oldGeometry) {
+  QQuickItem::geometryChange(newGeometry, oldGeometry);
+  if (newGeometry.size() != oldGeometry.size()) {
+    if (auto h = host())
+      h->WasResized();
+  }
+}
+
+void CefWebView::itemChange(ItemChange change, const ItemChangeData& value) {
+  QQuickItem::itemChange(change, value);
+  auto h = host();
+  if (!h)
+    return;
+  switch (change) {
+    case ItemVisibleHasChanged:
+      h->WasHidden(!value.boolValue || !m_active);
+      break;
+    case ItemSceneChange:
+    case ItemDevicePixelRatioHasChanged:
+      h->NotifyScreenInfoChanged();
+      h->WasResized();
+      break;
+    default:
+      break;
+  }
+}
+
+// ---- rendering -------------------------------------------------------------
+
+void CefWebView::cefPaint(bool popup, const void* buffer, int width, int height) {
+  QImage& img = popup ? m_popup : m_view;
+  // CEF delivers premultiplied BGRA, i.e. 0xAARRGGBB words on little endian.
+  if (img.width() != width || img.height() != height)
+    img = QImage(width, height, QImage::Format_ARGB32_Premultiplied);
+  std::memcpy(img.bits(), buffer, size_t(width) * size_t(height) * 4);
+  if (popup) {
+    m_popupDirty = true;
+  } else {
+    m_viewDirty = true;
+    m_frameCount++;
+    Q_EMIT frameSwapped();
+  }
+  update();
+}
+
+void CefWebView::cefPopupShow(bool show) {
+  m_popupVisible = show;
+  if (!show) {
+    m_popup = QImage();
+    m_popupRect = m_popupOriginalRect = QRect();
+    m_popupDirty = true;
+    update();
+  }
+}
+
+void CefWebView::cefPopupSize(const QRect& rect) {
+  // Same clamping as cefclient: keep <select> popups inside the view.
+  m_popupOriginalRect = rect;
+  QRect r = rect;
+  const QRect view = cefViewRect();
+  r.moveLeft(std::max(0, r.x()));
+  r.moveTop(std::max(0, r.y()));
+  if (r.right() >= view.width())
+    r.moveLeft(view.width() - r.width());
+  if (r.bottom() >= view.height())
+    r.moveTop(view.height() - r.height());
+  r.moveLeft(std::max(0, r.x()));
+  r.moveTop(std::max(0, r.y()));
+  m_popupRect = r;
+  update();
+}
+
+QSGNode* CefWebView::updatePaintNode(QSGNode* old, UpdatePaintNodeData*) {
+  auto* root = static_cast<RootNode*>(old);
+  if (m_view.isNull())
+    return root;
+  if (!root)
+    root = new RootNode;
+
+  const qreal dpr = devicePixelRatio();
+  const bool opaque = m_backgroundColor.alpha() == 255;
+
+  if (!root->view) {
+    root->view = new TextureNode;
+    root->appendChildNode(root->view);
+    m_viewDirty = true;
+  }
+  if (m_viewDirty) {
+    root->view->setImage(window(), m_view, opaque);
+    m_viewDirty = false;
+  }
+  root->view->setRect(0, 0, m_view.width() / dpr, m_view.height() / dpr);
+
+  const bool showPopup = m_popupVisible && !m_popup.isNull() && !m_popupRect.isEmpty();
+  if (showPopup) {
+    if (!root->popup) {
+      root->popup = new TextureNode;
+      root->appendChildNode(root->popup);
+      m_popupDirty = true;
+    }
+    if (m_popupDirty) {
+      root->popup->setImage(window(), m_popup, opaque);
+      m_popupDirty = false;
+    }
+    root->popup->setRect(m_popupRect);
+  } else if (root->popup) {
+    root->removeChildNode(root->popup);
+    delete root->popup;
+    root->popup = nullptr;
+  }
+  return root;
+}
+
+// ---- properties ------------------------------------------------------------
+
+void CefWebView::loadInBrowser(const QUrl& url) {
+  if (m_client && m_client->browser())
+    m_client->browser()->GetMainFrame()->LoadURL(cefstr(url.toString()));
+}
+
+void CefWebView::setUrl(const QUrl& url) {
+  if (url == m_url)
+    return;
+  m_url = url;
+  Q_EMIT urlChanged();
+  loadInBrowser(url);  // before creation the URL is used as the start page
+}
+
+void CefWebView::loadHtml(const QString& html) {
+  if (!m_client) {
+    m_pendingHtml = html;
+    return;
+  }
+  loadInBrowser(QUrl(QStringLiteral("data:text/html;charset=utf-8;base64,") +
+                     QString::fromLatin1(html.toUtf8().toBase64())));
+}
+
+void CefWebView::setZoomFactor(double factor) {
+  factor = std::clamp(factor, 0.25, 5.0);
+  if (qFuzzyCompare(factor, m_zoomFactor))
+    return;
+  m_zoomFactor = factor;
+  if (auto h = host())
+    h->SetZoomLevel(std::log(factor) / std::log(kZoomBase));
+  Q_EMIT zoomFactorChanged();
+}
+
+void CefWebView::setAudioMuted(bool muted) {
+  if (muted == m_audioMuted)
+    return;
+  m_audioMuted = muted;
+  if (auto h = host())
+    h->SetAudioMuted(muted);
+  Q_EMIT audioMutedChanged();
+}
+
+void CefWebView::setBackgroundColor(const QColor& color) {
+  if (color == m_backgroundColor)
+    return;
+  if (m_client)
+    qCWarning(lcCef) << "backgroundColor only applies before the browser is created";
+  m_backgroundColor = color;
+  Q_EMIT backgroundColorChanged();
+}
+
+void CefWebView::setFrameRate(int fps) {
+  fps = std::clamp(fps, 1, 240);
+  if (fps == m_frameRate)
+    return;
+  m_frameRate = fps;
+  if (auto h = host())
+    h->SetWindowlessFrameRate(fps);
+  Q_EMIT frameRateChanged();
+}
+
+void CefWebView::setActive(bool active) {
+  if (active == m_active)
+    return;
+  m_active = active;
+  if (auto h = host())
+    h->WasHidden(!isVisible() || !active);
+  Q_EMIT activeChanged();
+}
+
+void CefWebView::goBack() {
+  if (m_client && m_client->browser())
+    m_client->browser()->GoBack();
+}
+
+void CefWebView::goForward() {
+  if (m_client && m_client->browser())
+    m_client->browser()->GoForward();
+}
+
+void CefWebView::reload() {
+  if (m_client && m_client->browser())
+    m_client->browser()->Reload();
+}
+
+void CefWebView::reloadIgnoringCache() {
+  if (m_client && m_client->browser())
+    m_client->browser()->ReloadIgnoreCache();
+}
+
+void CefWebView::stop() {
+  if (m_client && m_client->browser())
+    m_client->browser()->StopLoad();
+}
+
+void CefWebView::runJavaScript(const QString& script) {
+  if (m_client && m_client->browser()) {
+    auto frame = m_client->browser()->GetMainFrame();
+    frame->ExecuteJavaScript(cefstr(script), frame->GetURL(), 0);
+  }
+}
+
+void CefWebView::find(const QString& text, bool forward, bool matchCase) {
+  auto h = host();
+  if (!h)
+    return;
+  if (text.isEmpty()) {
+    stopFinding(true);
+    return;
+  }
+  const bool findNext = text == m_lastFind;
+  m_lastFind = text;
+  h->Find(cefstr(text), forward, matchCase, findNext);
+}
+
+void CefWebView::stopFinding(bool clearSelection) {
+  m_lastFind.clear();
+  if (auto h = host())
+    h->StopFinding(clearSelection);
+}
+
+#define CEF_QML_EDIT_COMMAND(name, cefName)                         \
+  void CefWebView::name() {                                         \
+    if (m_client && m_client->browser())                            \
+      if (auto f = m_client->browser()->GetFocusedFrame())          \
+        f->cefName();                                               \
+  }
+CEF_QML_EDIT_COMMAND(copy, Copy)
+CEF_QML_EDIT_COMMAND(cut, Cut)
+CEF_QML_EDIT_COMMAND(paste, Paste)
+CEF_QML_EDIT_COMMAND(selectAll, SelectAll)
+CEF_QML_EDIT_COMMAND(undo, Undo)
+CEF_QML_EDIT_COMMAND(redo, Redo)
+#undef CEF_QML_EDIT_COMMAND
+
+// ---- CEF -> QML state ------------------------------------------------------
+
+void CefWebView::cefAddressChange(const QUrl& url) {
+  if (url == m_url)
+    return;
+  m_url = url;
+  Q_EMIT urlChanged();
+}
+
+void CefWebView::cefTitleChange(const QString& title) {
+  if (title == m_title)
+    return;
+  m_title = title;
+  Q_EMIT titleChanged();
+}
+
+void CefWebView::cefIconChange(const QUrl& icon) {
+  if (icon == m_icon)
+    return;
+  m_icon = icon;
+  Q_EMIT iconChanged();
+}
+
+void CefWebView::cefLoadingStateChange(bool loading, bool canGoBack, bool canGoForward) {
+  if (loading != m_loading) {
+    m_loading = loading;
+    Q_EMIT loadingChanged();
+  }
+  if (canGoBack != m_canGoBack || canGoForward != m_canGoForward) {
+    m_canGoBack = canGoBack;
+    m_canGoForward = canGoForward;
+    Q_EMIT navigationStateChanged();
+  }
+}
+
+void CefWebView::cefLoadProgress(double progress) {
+  if (qFuzzyCompare(progress, m_loadProgress))
+    return;
+  m_loadProgress = progress;
+  Q_EMIT loadProgressChanged();
+}
+
+void CefWebView::cefStatusMessage(const QString& message) {
+  if (message == m_hoveredUrl)
+    return;
+  m_hoveredUrl = message;
+  Q_EMIT hoveredUrlChanged();
+}
+
+void CefWebView::cefTooltip(const QString& text) {
+  if (text == m_tooltip)
+    return;
+  m_tooltip = text;
+  Q_EMIT tooltipChanged();
+}
+
+void CefWebView::cefCursor(int type) {
+  setCursor(QCursor(cursorShape(type)));
+}
+
+void CefWebView::cefFullscreen(bool fullscreen) {
+  if (fullscreen == m_fullscreen)
+    return;
+  m_fullscreen = fullscreen;
+  Q_EMIT fullscreenChanged();
+}
+
+void CefWebView::cefTextInputMode(bool editable) {
+  if (editable == m_editableFocused)
+    return;
+  m_editableFocused = editable;
+  setFlag(ItemAcceptsInputMethod, editable);
+  if (hasActiveFocus())
+    QGuiApplication::inputMethod()->update(Qt::ImEnabled | Qt::ImHints);
+}
+
+void CefWebView::cefImeBounds(const QRect& bounds) {
+  m_imeBounds = bounds;
+  if (hasActiveFocus())
+    QGuiApplication::inputMethod()->update(Qt::ImCursorRectangle);
+}
+
+bool CefWebView::cefWantsPopupSignal() const {
+  static const QMetaMethod sig = QMetaMethod::fromSignal(&CefWebView::newWindowRequested);
+  return isSignalConnected(sig);
+}
+
+// ---- input -----------------------------------------------------------------
+
+QPoint CefWebView::toBrowser(QPointF pos) const {
+  QPoint p(int(std::floor(pos.x())), int(std::floor(pos.y())));
+  if (m_popupVisible && m_popupRect.contains(p))
+    p += m_popupOriginalRect.topLeft() - m_popupRect.topLeft();
+  return p;
+}
+
+void CefWebView::sendMouseClick(QMouseEvent* event, bool up, int clickCount) {
+  auto h = host();
+  if (!h)
+    return;
+  CefBrowserHost::MouseButtonType type;
+  switch (event->button()) {
+    case Qt::LeftButton: type = MBT_LEFT; break;
+    case Qt::MiddleButton: type = MBT_MIDDLE; break;
+    case Qt::RightButton: type = MBT_RIGHT; break;
+    default: return;
+  }
+  CefMouseEvent ev;
+  const QPoint p = toBrowser(event->position());
+  ev.x = p.x();
+  ev.y = p.y();
+  // On release the button is no longer in buttons(); Chromium still expects
+  // the flag for the button being released.
+  ev.modifiers = cefModifiers(event->modifiers(), event->buttons() | event->button());
+  h->SendMouseClickEvent(ev, type, up, clickCount);
+}
+
+void CefWebView::mousePressEvent(QMouseEvent* event) {
+  if (event->button() == Qt::BackButton) {
+    goBack();
+    event->accept();
+    return;
+  }
+  if (event->button() == Qt::ForwardButton) {
+    goForward();
+    event->accept();
+    return;
+  }
+  if (!hasActiveFocus())
+    forceActiveFocus(Qt::MouseFocusReason);
+  m_clickCount = 1;
+  sendMouseClick(event, false, m_clickCount);
+  event->accept();
+}
+
+void CefWebView::mouseDoubleClickEvent(QMouseEvent* event) {
+  m_clickCount = 2;
+  sendMouseClick(event, false, m_clickCount);
+  event->accept();
+}
+
+void CefWebView::mouseReleaseEvent(QMouseEvent* event) {
+  sendMouseClick(event, true, m_clickCount);
+  event->accept();
+}
+
+void CefWebView::mouseMoveEvent(QMouseEvent* event) {
+  if (auto h = host()) {
+    CefMouseEvent ev;
+    const QPoint p = toBrowser(event->position());
+    ev.x = p.x();
+    ev.y = p.y();
+    ev.modifiers = cefModifiers(event->modifiers(), event->buttons());
+    h->SendMouseMoveEvent(ev, false);
+  }
+  event->accept();
+}
+
+void CefWebView::mouseUngrabEvent() {
+  if (auto h = host())
+    h->SendCaptureLostEvent();
+}
+
+void CefWebView::hoverEnterEvent(QHoverEvent* event) {
+  hoverMoveEvent(event);
+}
+
+void CefWebView::hoverMoveEvent(QHoverEvent* event) {
+  if (auto h = host()) {
+    CefMouseEvent ev;
+    const QPoint p = toBrowser(event->position());
+    ev.x = p.x();
+    ev.y = p.y();
+    ev.modifiers = cefModifiers(event->modifiers(), Qt::NoButton);
+    h->SendMouseMoveEvent(ev, false);
+  }
+  event->accept();
+}
+
+void CefWebView::hoverLeaveEvent(QHoverEvent* event) {
+  if (auto h = host()) {
+    CefMouseEvent ev;
+    const QPoint p = toBrowser(event->position());
+    ev.x = p.x();
+    ev.y = p.y();
+    ev.modifiers = cefModifiers(event->modifiers(), Qt::NoButton);
+    h->SendMouseMoveEvent(ev, true);
+  }
+  event->accept();
+}
+
+void CefWebView::wheelEvent(QWheelEvent* event) {
+  auto h = host();
+  if (!h) {
+    event->ignore();
+    return;
+  }
+  CefMouseEvent ev;
+  const QPoint p = toBrowser(event->position());
+  ev.x = p.x();
+  ev.y = p.y();
+  ev.modifiers = cefModifiers(event->modifiers(), event->buttons());
+  // angleDelta is 120 per notch, which is also what Chromium expects from a
+  // wheel (WHEEL_DELTA); touchpads report pixel deltas.
+  QPoint delta = event->pixelDelta();
+  if (delta.isNull())
+    delta = event->angleDelta();
+  else
+    ev.modifiers |= EVENTFLAG_PRECISION_SCROLLING_DELTA;
+  h->SendMouseWheelEvent(ev, delta.x(), delta.y());
+  event->accept();
+}
+
+void CefWebView::keyPressEvent(QKeyEvent* event) {
+  auto h = host();
+  if (!h) {
+    event->ignore();
+    return;
+  }
+  CefKeyEvent ev;
+  ev.windows_key_code = qtKeyToWindowsKeyCode(event->key(), event->modifiers());
+  ev.native_key_code = int(event->nativeScanCode());
+  ev.modifiers = cefModifiers(event->modifiers(), Qt::NoButton);
+  if (event->isAutoRepeat())
+    ev.modifiers |= EVENTFLAG_IS_REPEAT;
+
+  const QString text = event->text();
+  const char16_t ch = text.isEmpty() ? 0 : char16_t(text.at(0).unicode());
+  ev.character = ch;
+  ev.unmodified_character = ch;
+  ev.type = KEYEVENT_RAWKEYDOWN;
+  h->SendKeyEvent(ev);
+
+  // Ctrl+<key> produces control characters in Qt; Chromium handles those
+  // shortcuts from the RAWKEYDOWN alone. AltGr (Ctrl+Alt) still types.
+  const auto mods = event->modifiers();
+  const bool ctrlShortcut = (mods & Qt::ControlModifier) && !(mods & Qt::AltModifier);
+  if (!text.isEmpty() && !ctrlShortcut) {
+    ev.type = KEYEVENT_CHAR;
+    for (QChar c : text) {
+      ev.character = char16_t(c.unicode());
+      ev.unmodified_character = ev.character;
+      h->SendKeyEvent(ev);
+    }
+  }
+  event->accept();
+}
+
+void CefWebView::keyReleaseEvent(QKeyEvent* event) {
+  auto h = host();
+  if (!h) {
+    event->ignore();
+    return;
+  }
+  CefKeyEvent ev;
+  ev.type = KEYEVENT_KEYUP;
+  ev.windows_key_code = qtKeyToWindowsKeyCode(event->key(), event->modifiers());
+  ev.native_key_code = int(event->nativeScanCode());
+  ev.modifiers = cefModifiers(event->modifiers(), Qt::NoButton);
+  const QString text = event->text();
+  ev.character = text.isEmpty() ? 0 : char16_t(text.at(0).unicode());
+  ev.unmodified_character = ev.character;
+  h->SendKeyEvent(ev);
+  event->accept();
+}
+
+void CefWebView::inputMethodEvent(QInputMethodEvent* event) {
+  auto h = host();
+  if (!h) {
+    event->ignore();
+    return;
+  }
+  if (!event->commitString().isEmpty()) {
+    h->ImeCommitText(cefstr(event->commitString()), CefRange::InvalidRange(), 0);
+  } else if (!event->preeditString().isEmpty()) {
+    int cursor = int(event->preeditString().size());
+    for (const auto& a : event->attributes()) {
+      if (a.type == QInputMethodEvent::Cursor)
+        cursor = a.start;
+    }
+    h->ImeSetComposition(cefstr(event->preeditString()), {},
+                         CefRange::InvalidRange(), CefRange(uint32_t(cursor), uint32_t(cursor)));
+  } else {
+    h->ImeCancelComposition();
+  }
+  event->accept();
+}
+
+QVariant CefWebView::inputMethodQuery(Qt::InputMethodQuery query) const {
+  switch (query) {
+    case Qt::ImEnabled:
+      return m_editableFocused;
+    case Qt::ImCursorRectangle:
+      return QRectF(m_imeBounds);
+    case Qt::ImHints:
+      return int(Qt::ImhNone);
+    default:
+      return QQuickItem::inputMethodQuery(query);
+  }
+}
+
+void CefWebView::focusInEvent(QFocusEvent* event) {
+  QQuickItem::focusInEvent(event);
+  if (auto h = host())
+    h->SetFocus(true);
+}
+
+void CefWebView::focusOutEvent(QFocusEvent* event) {
+  QQuickItem::focusOutEvent(event);
+  if (auto h = host())
+    h->SetFocus(false);
+}

@@ -1,0 +1,3 @@
+module CefQml
+plugin cefqmlplugin
+classname CefQmlPlugin

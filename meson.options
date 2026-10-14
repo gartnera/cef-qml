@@ -1,0 +1,6 @@
+option('qml_dir', type: 'string', value: '',
+  description: 'Install directory for the CefQml QML module (default: <libdir>/qt6/qml)')
+option('runtime_dir', type: 'string', value: '',
+  description: 'Install directory for libcef.so, its resources and the helper (default: <libdir>/cef-qml)')
+option('examples', type: 'boolean', value: true,
+  description: 'Install the example browser QML files')
