@@ -339,6 +339,10 @@ FocusScope {
     ListView {
         id: list
         objectName: "historyList"
+        // No cache buffer: buffered rows are created asynchronously, and a
+        // model reset (history cleared or reloaded) while one is pending
+        // makes Qt warn "DelegateModel::cancel: index out range".
+        cacheBuffer: 0
         anchors.top: header.bottom
         anchors.topMargin: 6
         anchors.left: parent.left

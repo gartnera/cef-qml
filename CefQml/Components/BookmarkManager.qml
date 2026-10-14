@@ -421,6 +421,9 @@ FocusScope {
     ListView {
         id: tree
         objectName: "bookmarkFolderList"
+        // No cache buffer: see HistoryView (model resets while a buffered
+        // row is incubating make Qt warn).
+        cacheBuffer: 0
         anchors.top: header.bottom
         anchors.topMargin: 10
         anchors.left: parent.left
@@ -510,6 +513,9 @@ FocusScope {
     ListView {
         id: list
         objectName: "bookmarkList"
+        // No cache buffer: see HistoryView (model resets while a buffered
+        // row is incubating make Qt warn).
+        cacheBuffer: 0
         anchors.top: crumbs.bottom
         anchors.topMargin: 4
         anchors.left: crumbs.left
