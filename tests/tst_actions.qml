@@ -42,7 +42,7 @@ Item {
             registry: browser.actions
             name: "test.custom"
             text: "Custom action"
-            defaultShortcuts: ["Ctrl+Shift+I"]          // overridden by `bindings`
+            defaultShortcuts: ["Ctrl+Shift+J"]          // overridden by `bindings`
             onTriggered: args => root.customCalls = root.customCalls.concat([args])
         }
         BrowserAction {
@@ -252,7 +252,7 @@ Item {
             keyClick(Qt.Key_U, Qt.ControlModifier | Qt.ShiftModifier)
             tryVerify(() => root.customCalls.length === n + 2, 2000)
             compare(root.customCalls[n + 1].via, "u", "binding args reach the action")
-            keyClick(Qt.Key_I, Qt.ControlModifier | Qt.ShiftModifier)
+            keyClick(Qt.Key_J, Qt.ControlModifier | Qt.ShiftModifier)
             settle()
             compare(root.customCalls.length, n + 2, "the action's own default was overridden")
         }
@@ -272,8 +272,8 @@ Item {
             settle()
             compare(root.customCalls.length, n + 1)
             kb.reset("test.custom")
-            compare(kb.sequencesFor("test.custom"), ["Ctrl+Shift+I"], "back to the action's defaults")
-            keyClick(Qt.Key_I, Qt.ControlModifier | Qt.ShiftModifier)
+            compare(kb.sequencesFor("test.custom"), ["Ctrl+Shift+J"], "back to the action's defaults")
+            keyClick(Qt.Key_J, Qt.ControlModifier | Qt.ShiftModifier)
             tryVerify(() => root.customCalls.length === n + 2, 2000)
             browser.bindings = root.userBindings
             compare(kb.sequencesFor("test.custom")[0], "Ctrl+Shift+Y")
