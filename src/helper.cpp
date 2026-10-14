@@ -1,6 +1,6 @@
 // CEF sub-process entry point (renderer, GPU, network/utility processes).
 //
-// The browser process lives inside the host application (e.g. quickshell),
+// The browser process lives inside the host application (your Qt application),
 // whose main() we do not control, so CefSettings.browser_subprocess_path points
 // here instead.
 

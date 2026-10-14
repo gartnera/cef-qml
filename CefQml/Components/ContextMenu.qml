@@ -2,7 +2,6 @@ import QtQuick
 import CefQml
 
 // Right-click menu for a WebTabs, drawn inside the window.
-// (In Quickshell you can host the same items in a PopupWindow instead.)
 Item {
     id: menu
     required property WebTabs tabs

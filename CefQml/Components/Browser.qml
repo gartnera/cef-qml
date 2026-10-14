@@ -73,7 +73,7 @@ FocusScope {
   <a href="https://en.wikipedia.org"><span>W</span>Wikipedia</a>
   <a href="https://news.ycombinator.com"><span>Y</span>Hacker News</a>
   <a href="https://www.youtube.com"><span>▶</span>YouTube</a>
-  <a href="https://quickshell.org"><span>Q</span>Quickshell</a>
+  <a href="https://doc.qt.io"><span>Q</span>Qt Docs</a>
 </div>
 <script>
   const tick = () => { const d = new Date(); const h = d.getHours();

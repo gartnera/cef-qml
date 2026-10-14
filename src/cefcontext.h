@@ -19,7 +19,7 @@ class CefDownload;
 // access single-threaded.
 //
 // Initialization is lazy (first CefWebView) and survives QML engine reloads
-// (quickshell hot reload), since CefInitialize cannot be called twice.
+// (e.g. live-reloading QML), since CefInitialize cannot be called twice.
 class CefContext : public QObject {
   Q_OBJECT
 

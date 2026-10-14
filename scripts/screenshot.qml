@@ -50,7 +50,7 @@ Window {
     }
 
     Component.onCompleted: {
-        const sites = env("urls", "https://en.wikipedia.org/wiki/Chromium_Embedded_Framework,https://github.com/chromiumembedded/cef,https://quickshell.org").split(",")
+        const sites = env("urls", "https://en.wikipedia.org/wiki/Chromium_Embedded_Framework,https://github.com/chromiumembedded/cef,https://www.qt.io").split(",")
         const steps = []
         // 1: new tab page
         steps.push(next => { browser.tabs.openTab(browser.homeUrl); waitLoaded(browser.currentView, 1500, () => shot("1-new-tab", next)) })

@@ -132,7 +132,7 @@ QString CefContext::chooseCacheDir() {
   }
 
   // Chromium allows one browser process per profile directory. If another
-  // live process holds it (e.g. a second quickshell instance), fall back to a
+  // live process holds it (e.g. a second instance of the same app), fall back to a
   // private throwaway profile instead of failing to start.
   // The lock is a dangling symlink whose target is "<hostname>-<pid>".
   const QByteArray lockPath = QFile::encodeName(dir + QStringLiteral("/SingletonLock"));
@@ -170,6 +170,21 @@ bool CefContext::ensureInitialized() {
   Q_ASSERT(QThread::currentThread() == QCoreApplication::instance()->thread());
   m_state = State::Failed;
 
+  // libcef.so carries Chromium's allocator shim, which frees memory that libc
+  // handed out (realpath(), strdup(), ...) with glibc's free(). If the process
+  // replaced malloc (jemalloc, tcmalloc, mimalloc...), those pointers belong
+  // to another allocator and the process crashes shortly after start-up.
+  // Refuse to start instead.
+  if (void* libc = dlopen("libc.so.6", RTLD_NOW | RTLD_NOLOAD)) {
+    const bool replaced = dlsym(RTLD_DEFAULT, "malloc") != dlsym(libc, "malloc");
+    dlclose(libc);
+    if (replaced && !qEnvironmentVariableIsSet("CEF_QML_ALLOW_MALLOC_REPLACEMENT")) {
+      qCCritical(lcCef) << "this process replaces malloc (jemalloc/tcmalloc/...), which is"
+                           " incompatible with in-process CEF; not starting the browser";
+      return false;
+    }
+  }
+
   m_runtimeDir = locateRuntimeDir();
   const QString helper = m_runtimeDir + QStringLiteral("/cef-qml-helper");
   if (!QFileInfo(helper).isExecutable()) {
@@ -191,7 +206,7 @@ bool CefContext::ensureInitialized() {
       m_ozonePlatform = QStringLiteral("headless");
   }
 
-  // Do not hand the host's argv to Chromium: quickshell's own flags would be
+  // Do not hand the host's argv to Chromium: the application's own flags would be
   // parsed as Chromium switches.
   static char arg0[] = "cef-qml";
   static char* argv[] = {arg0, nullptr};
