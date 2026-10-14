@@ -180,10 +180,12 @@ bool CefContext::ensureInitialized() {
 
   m_ozonePlatform = envString("CEF_QML_OZONE_PLATFORM");
   if (m_ozonePlatform.isEmpty()) {
+    // Off-screen browsers never create native surfaces, so Ozone/Wayland
+    // offers nothing here (its clipboard needs a surface) and crashes in
+    // CefShutdown. "headless" works under any compositor; the clipboard is
+    // bridged through Qt instead (see CefWebView).
     const QString qpa = QGuiApplication::platformName();
-    if (qpa.startsWith(QLatin1String("wayland")))
-      m_ozonePlatform = QStringLiteral("wayland");
-    else if (qpa == QLatin1String("xcb"))
+    if (qpa == QLatin1String("xcb"))
       m_ozonePlatform = QStringLiteral("x11");
     else
       m_ozonePlatform = QStringLiteral("headless");
@@ -318,6 +320,9 @@ void CefContext::shutdown() {
   }
   if (!m_clients.isEmpty())
     qCWarning(lcCef) << m_clients.size() << "browser(s) did not close before shutdown";
+
+  for (CefDownload* d : std::as_const(m_downloads))
+    d->releaseCallbacks();
 
   m_timer.stop();
   m_state = State::ShutDown;

@@ -198,6 +198,8 @@ class CefDownload : public QObject {
   Q_INVOKABLE void remove();
 
   void update(CefRefPtr<CefDownloadItem> item, CefRefPtr<CefDownloadItemCallback> callback);
+  // Drops CEF references before CefShutdown.
+  void releaseCallbacks();
 
   static CefDownload* find(uint32_t id);
 

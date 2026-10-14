@@ -65,7 +65,7 @@ void CefQmlClient::OnDevToolsMethodResult(CefRefPtr<CefBrowser>, int messageId, 
 
 void CefQmlClient::OnDevToolsEvent(CefRefPtr<CefBrowser>, const CefString& method,
                                    const void* params, size_t paramsSize) {
-  if (connected(&CefWebView::devToolsEvent))
+  if (m_view)
     m_view->cefDevToolsEvent(
         qstr(method), QByteArray(static_cast<const char*>(params), qsizetype(paramsSize)));
 }
@@ -239,6 +239,8 @@ bool CefQmlClient::OnConsoleMessage(CefRefPtr<CefBrowser>, cef_log_severity_t le
                                     int line) {
   if (!m_view)
     return false;
+  if (m_view->cefConsoleMessage(qstr(message)))
+    return true;
   int l = CefWebView::Info;
   switch (level) {
     case LOGSEVERITY_VERBOSE:

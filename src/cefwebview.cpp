@@ -4,6 +4,7 @@
 #include "cefcontext.h"
 #include "keymap.h"
 
+#include <QClipboard>
 #include <QCursor>
 #include <QGuiApplication>
 #include <QInputMethod>
@@ -27,6 +28,44 @@
 Q_DECLARE_LOGGING_CATEGORY(lcCef)
 
 namespace {
+
+// Prefix of console messages carrying clipboard text from the page; they
+// are consumed by CefQmlClient::OnConsoleMessage and never reach QML.
+constexpr char kClipboardMessagePrefix[] = "\x01" "cefqml:clipboard:";
+
+// Installed in every document: reports copies to the host (Qt clipboard),
+// since off-screen Chromium only has a process-private clipboard. Uses the
+// original console.debug, captured before page scripts run.
+constexpr char kClipboardScript[] = R"JS((() => {
+  const log = console.debug.bind(console);
+  const report = t => { if (typeof t === 'string' && t.length) log('\x01cefqml:clipboard:' + t); };
+  const selected = () => {
+    const el = document.activeElement;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') &&
+        typeof el.selectionStart === 'number')
+      return el.value.substring(el.selectionStart, el.selectionEnd);
+    return String(getSelection());
+  };
+  for (const type of ['copy', 'cut']) {
+    addEventListener(type, e => {
+      report(e.defaultPrevented && e.clipboardData
+             ? e.clipboardData.getData('text/plain') : selected());
+    });
+  }
+  const cb = navigator.clipboard;
+  if (cb) {
+    const writeText = cb.writeText && cb.writeText.bind(cb);
+    if (writeText) cb.writeText = t => { report(String(t)); return writeText(t).catch(() => {}); };
+    const write = cb.write && cb.write.bind(cb);
+    if (write) cb.write = async items => {
+      for (const item of items || []) {
+        if (item.types && item.types.includes('text/plain'))
+          report(await (await item.getType('text/plain')).text());
+      }
+      return write(items).catch(() => {});
+    };
+  }
+})();)JS";
 
 CefString cefstr(const QString& s) {
   return CefString(s.toStdU16String());
@@ -153,12 +192,14 @@ void CefWebView::createBrowser() {
   }
   if (start.isEmpty())
     start = QUrl(QStringLiteral("about:blank"));
-  if (!m_userScripts.isEmpty()) {
-    // User scripts are registered over DevTools once the browser exists; hold
-    // the real first navigation until then so they apply to it too.
-    m_deferredStartUrl = start;
-    start = QUrl(QStringLiteral("about:blank"));
-  }
+  // Scripts (ours and userScripts) are registered over DevTools once the
+  // browser exists; hold the real first navigation until then so they apply
+  // to it too.
+  // Scripts only apply to documents created after they are registered, and
+  // registering needs a live document; so start on about:blank, register,
+  // then navigate (the about:blank entry is dropped from history after).
+  m_deferredStartUrl = start;
+  start = QUrl(QStringLiteral("about:blank"));
 
   if (!CefBrowserHost::CreateBrowser(windowInfo, m_client, cefstr(start.toString()),
                                      settings, nullptr, nullptr)) {
@@ -193,6 +234,14 @@ void CefWebView::cefAfterCreated() {
 }
 
 void CefWebView::cefBeforeClose() {
+  // Answer anything still pending: requests hold CEF callbacks, which must
+  // not outlive the browser (or CefShutdown).
+  for (auto* r : findChildren<CefJavaScriptDialog*>(Qt::FindDirectChildrenOnly))
+    delete r;
+  for (auto* r : findChildren<CefPermissionRequest*>(Qt::FindDirectChildrenOnly))
+    delete r;
+  for (auto* r : findChildren<CefFileDialogRequest*>(Qt::FindDirectChildrenOnly))
+    delete r;
   m_client = nullptr;
   m_devToolsCallbacks.clear();
   m_devToolsQueue.clear();
@@ -481,7 +530,37 @@ void CefWebView::cefDevToolsResult(int id, bool success, const QByteArray& json)
 }
 
 void CefWebView::cefDevToolsEvent(const QString& method, const QByteArray& json) {
-  Q_EMIT devToolsEvent(method, QJsonDocument::fromJson(json).toVariant());
+  static const QMetaMethod sig = QMetaMethod::fromSignal(&CefWebView::devToolsEvent);
+  if (isSignalConnected(sig))
+    Q_EMIT devToolsEvent(method, QJsonDocument::fromJson(json).toVariant());
+}
+
+bool CefWebView::cefConsoleMessage(const QString& message) {
+  static const QString prefix = QString::fromLatin1(kClipboardMessagePrefix);
+  if (!message.startsWith(prefix))
+    return false;
+  QGuiApplication::clipboard()->setText(message.mid(prefix.size()));
+  return true;
+}
+
+void CefWebView::pasteFromSystemClipboard() {
+  const QString text = QGuiApplication::clipboard()->text();
+  if (text.isEmpty()) {
+    if (m_client && m_client->browser())
+      if (auto f = m_client->browser()->GetFocusedFrame())
+        f->Paste();
+    return;
+  }
+  // Give the page a real paste event first; insert the text if it does not
+  // handle it.
+  const QString literal = QString::fromUtf8(
+      QJsonDocument(QJsonArray{text}).toJson(QJsonDocument::Compact));
+  runJavaScript(QStringLiteral(
+      "(t => { t = t[0]; const el = document.activeElement || document.body;"
+      " let dt = null; try { dt = new DataTransfer(); dt.setData('text/plain', t); } catch (e) {}"
+      " const ev = new ClipboardEvent('paste', {clipboardData: dt, bubbles: true, cancelable: true});"
+      " if (el.dispatchEvent(ev)) document.execCommand('insertText', false, t); })(%1)")
+                    .arg(literal));
 }
 
 void CefWebView::callJs(const QJSValue& callback, const QVariant& result,
@@ -568,31 +647,34 @@ void CefWebView::applyUserScripts() {
   }
   m_userScriptIds.clear();
 
-  auto loadDeferred = [this] {
-    if (m_deferredStartUrl.isValid()) {
-      const QUrl url = std::exchange(m_deferredStartUrl, QUrl());
-      loadInBrowser(url);
-    }
-  };
-  if (m_userScripts.isEmpty()) {
-    loadDeferred();
-    return;
-  }
   // Scripts only take effect while the Page domain is enabled.
-  sendDevTools(QStringLiteral("Page.enable"), {}, nullptr);
-  auto remaining = std::make_shared<int>(int(m_userScripts.size()));
+  if (!m_internalScriptsInstalled) {
+    m_internalScriptsInstalled = true;
+    sendDevTools(QStringLiteral("Page.enable"), {}, nullptr);
+    sendDevTools(QStringLiteral("Page.addScriptToEvaluateOnNewDocument"),
+                 {{QStringLiteral("source"), QString::fromUtf8(kClipboardScript)}}, nullptr);
+  }
   for (const QString& source : std::as_const(m_userScripts)) {
     sendDevTools(QStringLiteral("Page.addScriptToEvaluateOnNewDocument"),
                  {{QStringLiteral("source"), source}},
-                 [this, remaining, loadDeferred](bool ok, const QJsonValue& r) {
+                 [this](bool ok, const QJsonValue& r) {
                    if (ok)
                      m_userScriptIds << r.toObject().value(QStringLiteral("identifier")).toString();
                    else
                      qCWarning(lcCef) << "failed to install user script" << r;
-                   if (--*remaining == 0)
-                     loadDeferred();
                  });
   }
+
+  if (!m_deferredStartUrl.isValid())
+    return;
+  // Replies come back in order: once this one arrives, everything above is
+  // registered and the real first page can load.
+  sendDevTools(QStringLiteral("Page.enable"), {}, [this](bool, const QJsonValue&) {
+    if (!m_deferredStartUrl.isValid())
+      return;
+    m_dropInitialHistoryEntry = true;
+    loadInBrowser(std::exchange(m_deferredStartUrl, QUrl()));
+  });
 }
 
 void CefWebView::find(const QString& text, bool forward, bool matchCase) {
@@ -622,7 +704,6 @@ void CefWebView::stopFinding(bool clearSelection) {
   }
 CEF_QML_EDIT_COMMAND(copy, Copy)
 CEF_QML_EDIT_COMMAND(cut, Cut)
-CEF_QML_EDIT_COMMAND(paste, Paste)
 CEF_QML_EDIT_COMMAND(selectAll, SelectAll)
 CEF_QML_EDIT_COMMAND(undo, Undo)
 CEF_QML_EDIT_COMMAND(redo, Redo)
@@ -652,6 +733,20 @@ void CefWebView::cefIconChange(const QUrl& icon) {
 }
 
 void CefWebView::cefLoadingStateChange(bool loading, bool canGoBack, bool canGoForward) {
+  if (m_dropInitialHistoryEntry)
+    canGoBack = false;  // only the about:blank bootstrap page is behind us
+  if (m_dropInitialHistoryEntry && !loading && m_url.toString() != QLatin1String("about:blank")) {
+    // The first real page has committed: forget the about:blank bootstrap
+    // entry (see createBrowser) so it cannot be navigated back to.
+    m_dropInitialHistoryEntry = false;
+    sendDevTools(QStringLiteral("Page.resetNavigationHistory"), {},
+                 [this](bool, const QJsonValue&) {
+                   if (m_client && m_client->browser()) {
+                     auto b = m_client->browser();
+                     cefLoadingStateChange(m_loading, b->CanGoBack(), b->CanGoForward());
+                   }
+                 });
+  }
   if (loading != m_loading) {
     m_loading = loading;
     Q_EMIT loadingChanged();
@@ -836,10 +931,21 @@ void CefWebView::wheelEvent(QWheelEvent* event) {
   event->accept();
 }
 
+void CefWebView::paste() {
+  pasteFromSystemClipboard();
+}
+
 void CefWebView::keyPressEvent(QKeyEvent* event) {
   auto h = host();
   if (!h) {
     event->ignore();
+    return;
+  }
+  if (event->matches(QKeySequence::Paste) ||
+      (event->key() == Qt::Key_V &&
+       event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier))) {
+    pasteFromSystemClipboard();
+    event->accept();
     return;
   }
   CefKeyEvent ev;

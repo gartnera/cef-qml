@@ -1,0 +1,14 @@
+module CefQml.Components
+depends CefQml
+singleton Style 1.0 Style.qml
+WebTabs 1.0 WebTabs.qml
+TabStrip 1.0 TabStrip.qml
+AddressField 1.0 AddressField.qml
+NavigationBar 1.0 NavigationBar.qml
+FindBar 1.0 FindBar.qml
+RequestOverlay 1.0 RequestOverlay.qml
+ContextMenu 1.0 ContextMenu.qml
+DownloadsBar 1.0 DownloadsBar.qml
+StatusBubble 1.0 StatusBubble.qml
+IconButton 1.0 IconButton.qml
+Browser 1.0 Browser.qml

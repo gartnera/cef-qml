@@ -218,6 +218,9 @@ class CefWebView : public QQuickItem {
   void flushDevToolsQueue();
   void applyUserScripts();
   void callJs(const QJSValue& callback, const QVariant& result, const QString& error);
+  void pasteFromSystemClipboard();
+  // True if the message was internal (clipboard bridge) and is consumed.
+  bool cefConsoleMessage(const QString& message);
 
   CefRefPtr<CefQmlClient> m_client;
 
@@ -232,6 +235,8 @@ class CefWebView : public QQuickItem {
   QStringList m_userScriptIds;
   QUrl m_deferredStartUrl;
   QUrl m_pendingLoad;
+  bool m_internalScriptsInstalled = false;
+  bool m_dropInitialHistoryEntry = false;
 
   QUrl m_url;
   QString m_pendingHtml;

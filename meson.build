@@ -4,6 +4,7 @@ project('cef-qml', 'cpp',
   default_options: [
     'cpp_std=c++20',
     'buildtype=release',
+    'b_ndebug=if-release',
     'warning_level=2',
   ],
 )

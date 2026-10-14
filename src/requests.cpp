@@ -344,6 +344,16 @@ void CefDownload::resume() {
     m_itemCallback->Resume();
 }
 
+void CefDownload::releaseCallbacks() {
+  m_beforeCallback = nullptr;
+  m_itemCallback = nullptr;
+  if (m_state == Pending || m_state == InProgress || m_state == Paused) {
+    m_state = Interrupted;
+    Q_EMIT updated();
+    Q_EMIT finished();
+  }
+}
+
 void CefDownload::remove() {
   if (m_state == InProgress || m_state == Paused || m_state == Pending)
     cancel();

@@ -44,6 +44,10 @@ case $mode in
     done
     export WAYLAND_DISPLAY=cefqml-test
     export QT_QPA_PLATFORM=wayland
+    # Qt 6.4's QtWayland dereferences a missing text-input device when the
+    # compositor (headless weston) offers no text-input protocol; any
+    # TextInput then crashes. The compose input context sidesteps it.
+    export QT_IM_MODULE=${QT_IM_MODULE:-compose}
     unset DISPLAY
     ;;
   *) echo "unknown mode $mode" >&2; exit 2 ;;
@@ -54,13 +58,4 @@ ${TEST_WRAPPER:-} "$runner" -input "$here/tst_webview.qml" "$@" >"$tmp/out.log" 
 status=$?
 cat "$tmp/out.log"
 set -e
-# Some QtWayland builds (seen with Qt 6.4) segfault while tearing down a
-# focused text-input item, with or without this plugin. Accept that only if
-# every test already reported success.
-if [ "$status" -ne 0 ] && [ "$mode" = wayland ] &&
-   grep -q '^PASS   : .*::cleanupTestCase()' "$tmp/out.log" &&
-   ! grep -q '^FAIL!' "$tmp/out.log"; then
-  echo "note: ignoring exit status $status after all tests passed (QtWayland teardown crash)" >&2
-  status=0
-fi
 exit "$status"

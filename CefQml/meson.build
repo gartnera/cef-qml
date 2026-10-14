@@ -27,3 +27,12 @@ plugin = shared_module('cefqmlplugin',
 
 configure_file(input: 'qmldir', output: 'qmldir', copy: true,
   install: true, install_dir: qml_dir / 'CefQml')
+
+# Pure-QML modules: CefQml.Components (any Qt Quick app) and CefQml.Quickshell
+# (needs Quickshell). Linked into the build tree so QML_IMPORT_PATH=<builddir>
+# picks up edits without rebuilding.
+foreach m : ['Components', 'Quickshell']
+  install_subdir(m, install_dir: qml_dir / 'CefQml')
+  run_command('ln', '-sfn', meson.current_source_dir() / m, meson.current_build_dir() / m,
+    check: true)
+endforeach

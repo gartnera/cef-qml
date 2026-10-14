@@ -35,6 +35,7 @@ Item {
     SignalSpy { id: contextMenuSpy; target: view; signalName: "contextMenuRequested" }
     SignalSpy { id: loadFinishedSpy; target: view; signalName: "loadFinished" }
     SignalSpy { id: findSpy; target: view; signalName: "findResult" }
+    TextInput { id: clipProbe; visible: false }
     SignalSpy { id: devToolsEventSpy; target: view; signalName: "devToolsEvent" }
 
     // A second view created with user scripts, to check they apply to the
@@ -343,6 +344,25 @@ Item {
             v.userScripts = ["document.addEventListener('DOMContentLoaded', () => document.title = 'second')"]
             v.reload()
             tryCompare(v, "title", "second", 10000)
+        }
+
+        function test_21_clipboard_bridge() {
+            if (Qt.platform.pluginName !== "offscreen")
+                skip("needs a usable system clipboard (headless compositors have no seat focus)")
+            view.loadHtml("<title>clip</title><input id=a value='from-page'><textarea id=b></textarea>")
+            tryCompare(view, "title", "clip", 10000)
+            view.forceActiveFocus()
+            evaluate(view, "a.focus(); a.select(); 1")
+            keyClick(Qt.Key_C, Qt.ControlModifier)
+            tryVerify(() => { clipProbe.text = ""; clipProbe.paste(); return clipProbe.text === "from-page" }, 5000)
+            // A page writing via the async clipboard API is mirrored too.
+            Cef.copyToClipboard("")
+            evaluate(view, "document.execCommand('copy'); 1")  // keeps the user-activation path warm
+            Cef.copyToClipboard("from-qt")
+            evaluate(view, "b.focus(); 1")
+            view.forceActiveFocus()
+            keyClick(Qt.Key_V, Qt.ControlModifier)
+            tryCompare(evaluate(view, "new Promise(r => setTimeout(() => r(b.value), 100))"), 0, "from-qt")
         }
 
         function test_12_urlFromUserInput() {

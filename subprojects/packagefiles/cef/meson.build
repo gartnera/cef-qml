@@ -6,7 +6,7 @@
 
 project('cef', 'cpp',
   version: '154.0.34',
-  default_options: ['cpp_std=c++20', 'warning_level=0'],
+  default_options: ['cpp_std=c++20', 'warning_level=0', 'b_ndebug=if-release'],
 )
 
 cxx = meson.get_compiler('cpp')
