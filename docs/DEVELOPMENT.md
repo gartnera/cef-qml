@@ -22,7 +22,8 @@ Notes for contributors (human or agent). Read this before changing anything.
   reuse belongs here, not in `examples/`.
 - `examples/browser/` — the reference application (`main.qml`, `dev.qml` for
   live reload, `BrowserApp.qml`).
-- `tests/` — `qmltestrunner` suites, run by `tests/run.sh` (via `meson test`).
+- `tests/` — `qmltestrunner` suites, run by `tests/run.sh` (via `meson test`),
+  and `cdp_remote.py` (external DevTools-protocol control, see below).
 - `subprojects/` — the CEF minimal binary distribution, fetched by a Meson wrap;
   `subprojects/packagefiles/cef/meson.build` builds `libcef_dll_wrapper`.
   When editing that overlay, also copy it to the extracted
@@ -45,6 +46,37 @@ QML_IMPORT_PATH=build qml examples/browser/main.qml
   offscreen (the meson `wayland` test runs `tst_webview.qml` only).
 - Each run gets a fresh profile (`CEF_QML_CACHE_DIR`).
 - Tests use `data:` URLs or `loadHtml` — no network.
+- `meson test -C build cdp-remote` runs `tests/cdp_remote.py build`: it starts
+  the reference browser, drives it over the remote-debugging port and checks
+  the clean SIGTERM exit (stdlib-only Python; skips with 77 without a `qml`
+  runtime, override with `QML_RUNTIME`).
+
+## Remote control (Chrome DevTools Protocol)
+
+Set `CEF_QML_REMOTE_DEBUGGING_PORT` to expose Chromium's remote-debugging
+endpoint on 127.0.0.1 for any CefQml app; every `CefWebView` is a `page`
+target:
+
+```sh
+CEF_QML_REMOTE_DEBUGGING_PORT=9222 QML_IMPORT_PATH=build qml examples/browser/main.qml &
+curl -s http://127.0.0.1:9222/json/version   # browser-level webSocketDebuggerUrl
+curl -s http://127.0.0.1:9222/json/list      # page targets (one per view/tab)
+```
+
+Connect any CDP client (or a raw WebSocket, as `tests/cdp_remote.py` does) to a
+target's `webSocketDebuggerUrl` and use `Page.navigate`, `Runtime.evaluate`,
+... as with Chrome; the app reflects the changes as usual (title, URL,
+history). A view's target exists while it is still on its about:blank
+bootstrap page; wait for its first page (`location.href`, `readyState`) before
+navigating, or the app's own first load supersedes yours. Anyone on the
+machine can connect, so only enable it for development or automation. `QT_LOGGING_RULES=cefqml.browser.info=true` makes the reference
+browser log its window title, which is handy for headless checks.
+
+Chromium installs SIGTERM/SIGINT/SIGHUP handlers that `_exit(0)` from inside
+the message pump. After `CefInitialize` the plugin restores the host's own
+handlers, or (when the host had none) turns these signals into
+`QCoreApplication::exit(0)`, so `aboutToQuit` and `CefShutdown` run; a second
+signal kills the process the default way.
 
 ## Gotchas (learned the hard way)
 

@@ -11,6 +11,17 @@ Window {
     color: Style.background
     title: (app.browser.title ? app.browser.title + " — " : "") + "CefQml Browser"
 
+    // Off by default; QT_LOGGING_RULES="cefqml.browser.info=true" lets external
+    // tooling (tests/cdp_remote.py) observe the window without a compositor.
+    LoggingCategory {
+        id: log
+        name: "cefqml.browser"
+        defaultLogLevel: LoggingCategory.Warning
+    }
+    // Deferred: the category is not usable before the component completes.
+    onTitleChanged: Qt.callLater(logTitle)
+    function logTitle() { console.info(log, "window title:", title) }
+
     BrowserApp {
         id: app
         anchors.fill: parent

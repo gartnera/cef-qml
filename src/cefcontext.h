@@ -7,6 +7,8 @@
 
 #include <atomic>
 
+struct sigaction;
+
 class CefQmlClient;
 class CefDownload;
 
@@ -62,6 +64,7 @@ class CefContext : public QObject {
   void doWork();
   bool performWork();
   void shutdown();
+  void installQuitSignalHandlers(const struct sigaction* hostActions);
 
   static QString locateRuntimeDir();
   static QString chooseCacheDir();

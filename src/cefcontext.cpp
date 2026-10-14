@@ -10,11 +10,13 @@
 #include <QGuiApplication>
 #include <QLoggingCategory>
 #include <QProcess>
+#include <QSocketNotifier>
 #include <QStandardPaths>
 #include <QThread>
 #include <QElapsedTimer>
 
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <signal.h>
 #include <unistd.h>
 
@@ -36,6 +38,24 @@ constexpr qint64 kTimerDelayPlaceholder = INT_MAX;
 
 QString envString(const char* name) {
   return qEnvironmentVariable(name);
+}
+
+// Termination signals. CefInitialize installs Chromium's own SIGTERM/SIGINT/
+// SIGHUP handlers (settings.disable_signal_handlers only covers crash
+// handlers); they end the process with _exit(0) from inside
+// CefDoMessageLoopWork (chrome::SessionEnding), skipping aboutToQuit, QML
+// teardown and CefShutdown. We give these signals back to the host: a handler
+// the host had installed (or SIG_IGN) is restored, and otherwise the signal
+// asks the Qt event loop to exit, so the app shuts down through the normal
+// path. SA_RESETHAND: a second signal terminates the process the default way
+// if the orderly exit hangs.
+constexpr int kQuitSignals[] = {SIGTERM, SIGINT, SIGHUP};
+constexpr int kQuitSignalCount = int(std::size(kQuitSignals));
+int g_quitSignalPipe[2] = {-1, -1};
+
+void onQuitSignal(int sig) {
+  const char c = char(sig);
+  [[maybe_unused]] const ssize_t n = write(g_quitSignalPipe[1], &c, 1);
 }
 
 class CefQmlApp : public CefApp, public CefBrowserProcessHandler {
@@ -244,6 +264,10 @@ bool CefContext::ensureInitialized() {
   qCInfo(lcCef) << "initializing CEF" << cef_version_info(0) << "runtime"
                 << m_runtimeDir << "ozone" << m_ozonePlatform << "profile" << cacheDir;
 
+  struct sigaction hostActions[kQuitSignalCount];
+  for (int i = 0; i < kQuitSignalCount; ++i)
+    sigaction(kQuitSignals[i], nullptr, &hostActions[i]);
+
   m_acceptWork = true;
   CefRefPtr<CefQmlApp> app(new CefQmlApp(m_ozonePlatform));
   if (!CefInitialize(mainArgs, settings, app, nullptr)) {
@@ -251,6 +275,7 @@ bool CefContext::ensureInitialized() {
     qCCritical(lcCef) << "CefInitialize failed, exit code" << CefGetExitCode();
     return false;
   }
+  installQuitSignalHandlers(hostActions);
 
   m_state = State::Running;
   // CEF must be shut down before the process exits: otherwise its threads keep
@@ -265,6 +290,40 @@ bool CefContext::ensureInitialized() {
   qAddPostRoutine([] { CefContext::instance()->shutdown(); });
   scheduleWork(0);
   return true;
+}
+
+void CefContext::installQuitSignalHandlers(const struct sigaction* hostActions) {
+  bool needPipe = false;
+  for (int i = 0; i < kQuitSignalCount; ++i)
+    needPipe |= hostActions[i].sa_handler == SIG_DFL;
+  if (needPipe && pipe2(g_quitSignalPipe, O_CLOEXEC | O_NONBLOCK) != 0) {
+    qCWarning(lcCef) << "cannot create signal pipe; SIGTERM/SIGINT will skip CEF shutdown";
+    needPipe = false;
+  }
+  if (needPipe) {
+    auto* notifier = new QSocketNotifier(g_quitSignalPipe[0], QSocketNotifier::Read, this);
+    connect(notifier, &QSocketNotifier::activated, this, [] {
+      char sig = 0;
+      while (read(g_quitSignalPipe[0], &sig, 1) == 1) {
+        qCInfo(lcCef) << "received signal" << int(sig) << "- quitting";
+        // exit() rather than quit(): a termination request must not be
+        // vetoed by a window's close handler.
+        QCoreApplication::exit(0);
+      }
+    });
+  }
+
+  for (int i = 0; i < kQuitSignalCount; ++i) {
+    if (hostActions[i].sa_handler != SIG_DFL || !needPipe) {
+      sigaction(kQuitSignals[i], &hostActions[i], nullptr);
+      continue;
+    }
+    struct sigaction sa {};
+    sa.sa_handler = onQuitSignal;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART | SA_RESETHAND;
+    sigaction(kQuitSignals[i], &sa, nullptr);
+  }
 }
 
 void CefContext::scheduleWork(qint64 delayMs) {

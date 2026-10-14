@@ -52,3 +52,15 @@ test('wayland', run_tests,
   env: ['TEST_INPUT=' + meson.current_source_dir() / 'tests' / 'tst_webview.qml'],
   depends: [plugin, helper, stage_runtime],
   timeout: 300, is_parallel: false)
+
+# Drives the reference browser from outside over the remote-debugging port
+# (CEF_QML_REMOTE_DEBUGGING_PORT) and checks it exits cleanly on SIGTERM.
+python3 = find_program('python3', required: false)
+if python3.found()
+  test('cdp-remote', python3,
+    args: [meson.current_source_dir() / 'tests' / 'cdp_remote.py',
+           meson.project_build_root(),
+           meson.current_source_dir() / 'examples' / 'browser' / 'main.qml'],
+    depends: [plugin, helper, stage_runtime],
+    timeout: 120, is_parallel: false)
+endif
