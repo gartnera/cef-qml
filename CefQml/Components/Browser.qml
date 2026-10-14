@@ -118,6 +118,13 @@ FocusScope {
     property SiteSettings siteSettings: SiteSettings { }
     property alias siteSettingsManager: ssManager
     readonly property bool siteSettingsVisible: siteSettingsOverlay.visible
+    // Where DevTools open ("devtools.toggle": F12, Ctrl+Shift+I; the context
+    // menu's "Inspect"): "bottom" or "right" (docked under / beside the
+    // page, resizable), "tab" (a tab next to the inspected one) or
+    // "window". Changing it moves the DevTools that are open.
+    property string devTools: "bottom"
+    // The DevToolsPanel hosting them (size, minimumSize, ...).
+    property alias devToolsPanel: devToolsHost
 
     signal lastTabClosed()
 
@@ -156,6 +163,12 @@ FocusScope {
     function hideSiteSettings() { siteSettingsOverlay.close() }
     function showCommandPalette(prefix) { return cmdPalette.open(prefix) }
     function hideCommandPalette() { cmdPalette.close() }
+    // DevTools of `tab` (default: the current one): open them (returns the
+    // frontend view), close, toggle, or reveal the element at (x, y).
+    function showDevTools(tab) { return ctl.showDevTools(tab) }
+    function closeDevTools(tab) { return ctl.closeDevTools(tab) }
+    function toggleDevTools(tab) { return ctl.toggleDevTools(tab) }
+    function inspectElement(x, y, tab) { return ctl.inspectElement(x, y, tab) }
     // Opens a bookmark (or any URL) as the bookmark components do: here, or
     // in a background tab next to the current one.
     function openBookmark(url, newTab) {
@@ -309,34 +322,47 @@ FocusScope {
         anchors.right: parent.right
         anchors.bottom: downloads.top
 
-        WebTabs {
-            id: webTabs
+        // The page area, with docked DevTools beside or under it.
+        DevToolsPanel {
+            id: devToolsHost
+            objectName: "devToolsPanel"
             anchors.fill: parent
-            homeUrl: browser.homeUrl
-            userScriptStore: browser.userScriptStore
-            historyStore: browser.historyStore
-            siteSettings: browser.siteSettings
-            onLastTabClosed: browser.keepOneTab ? browser.newTab() : browser.lastTabClosed()
-            onCurrentViewChanged: if (currentView && browser.activeFocus && !navBar.addressField.input.activeFocus)
-                                      currentView.forceActiveFocus()
-            onFileDialogRequested: (view, request) => fileDialogs.item ? fileDialogs.item.open(request) : request.reject()
-            interceptFileDialogs: fileDialogs.status === Loader.Ready
-        }
-
-        StatusBubble {
             view: webTabs.currentView
-            anchors.margins: 4
-        }
-
-        RequestOverlay {
-            anchors.fill: parent
             tabs: webTabs
-        }
+            // Its header's dock buttons set `dock`; the Binding below keeps
+            // following browser.devTools after that.
+            onDockChanged: browser.devTools = dock
+            onOpenUrlRequested: url => ctl.openTab(url, { index: webTabs.currentIndex + 1 })
 
-        LinkHints {
-            id: hintsOverlay
-            anchors.fill: parent
-            view: webTabs.currentView
+            WebTabs {
+                id: webTabs
+                anchors.fill: parent
+                homeUrl: browser.homeUrl
+                userScriptStore: browser.userScriptStore
+                historyStore: browser.historyStore
+                siteSettings: browser.siteSettings
+                onLastTabClosed: browser.keepOneTab ? browser.newTab() : browser.lastTabClosed()
+                onCurrentViewChanged: if (currentView && browser.activeFocus && !navBar.addressField.input.activeFocus)
+                                          currentView.forceActiveFocus()
+                onFileDialogRequested: (view, request) => fileDialogs.item ? fileDialogs.item.open(request) : request.reject()
+                interceptFileDialogs: fileDialogs.status === Loader.Ready
+            }
+
+            StatusBubble {
+                view: webTabs.currentView
+                anchors.margins: 4
+            }
+
+            RequestOverlay {
+                anchors.fill: parent
+                tabs: webTabs
+            }
+
+            LinkHints {
+                id: hintsOverlay
+                anchors.fill: parent
+                view: webTabs.currentView
+            }
         }
 
         // Manager panels; opening one closes the other.
@@ -435,6 +461,7 @@ FocusScope {
         anchors.fill: parent
         tabs: webTabs
         keyBindings: keys
+        actions: acts
         onOpenLinkInNewTab: url => ctl.openTab(url, { background: true, index: webTabs.currentIndex + 1 })
     }
 
@@ -495,6 +522,7 @@ FocusScope {
         tabs: webTabs
         searchUrl: browser.searchUrl
         isInternalUrl: u => browser.isNewTabUrl(u)
+        devTools: devToolsHost
     }
 
     BrowserActions {
@@ -516,6 +544,7 @@ FocusScope {
         linkHints: hintsOverlay
         siteInfo: navBar.siteInfo
         siteSettingsManager: browser.siteSettings ? siteSettingsOverlay : null
+        devTools: devToolsHost
     }
 
     // Install prompt for *.user.js pages loaded in the current tab.
@@ -527,6 +556,12 @@ FocusScope {
                     && browser.isUserScriptUrl(v.url))
                 browser.reviewUserScript(v.url.toString())
         }
+    }
+
+    Binding {
+        target: devToolsHost
+        property: "dock"
+        value: browser.devTools
     }
 
     // Window-wide, so they work while a page has focus.

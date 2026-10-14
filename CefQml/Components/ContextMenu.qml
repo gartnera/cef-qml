@@ -11,6 +11,12 @@ Item {
     property bool editable: false
     // Optional KeyBindings: entries show the keys of their action.
     property var keyBindings: null
+    // Optional ActionRegistry: with an enabled "devtools.inspect" action the
+    // menu ends with "Inspect", which triggers it with the clicked point.
+    property var actions: null
+    // Where the menu was opened, in view coordinates.
+    property real viewX: 0
+    property real viewY: 0
     signal openLinkInNewTab(url url)
 
     visible: false
@@ -27,6 +33,8 @@ Item {
         menu.linkUrl = linkUrl
         menu.selectedText = selectedText
         menu.editable = editable
+        menu.viewX = x
+        menu.viewY = y
         visible = true
         // The entries were just rebuilt; Column only positions them (and
         // updates the panel height) at the next polish. Lay out now so the
@@ -63,6 +71,12 @@ Item {
             list.push({ label: "Back", hint: _hint("nav.back"), enabled: view && view.canGoBack, action: () => view.goBack() })
             list.push({ label: "Forward", hint: _hint("nav.forward"), enabled: view && view.canGoForward, action: () => view.goForward() })
             list.push({ label: "Reload", hint: _hint("nav.reload"), action: () => view.reload() })
+        }
+        const inspect = actions && view && view.devToolsFor === null ? actions.action("devtools.inspect") : null
+        if (inspect && inspect.enabled) {
+            const v = view, x = viewX, y = viewY
+            if (list.length > 0) list.push(null)
+            list.push({ label: "Inspect", action: () => actions.trigger("devtools.inspect", { view: v, x: x, y: y }) })
         }
         return list
     }

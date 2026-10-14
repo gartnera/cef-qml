@@ -86,7 +86,8 @@ class CefWebView : public QQuickItem {
   // when its DevTools go away by themselves: closeDevTools() on the inspected
   // view, another frontend taking over, or the inspected view's browser
   // closing (tab closed, discarded). Setting devToolsFor to null releases the
-  // frontend's browser and leaves the view empty.
+  // frontend's browser and leaves the view empty. While devToolsFor is set,
+  // url is the frontend's (a devtools: URL); setting another one is ignored.
   Q_PROPERTY(CefWebView* devToolsFor READ devToolsFor WRITE setDevToolsFor NOTIFY devToolsForChanged)
   // On the inspected side: the view showing this view's DevTools, or null.
   Q_PROPERTY(CefWebView* devToolsView READ devToolsView NOTIFY devToolsChanged)

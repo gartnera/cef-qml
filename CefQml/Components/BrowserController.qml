@@ -26,6 +26,10 @@ QtObject {
     property int closedTabsLimit: 25
     // URLs not worth remembering when their tab closes (e.g. a new-tab page).
     property var isInternalUrl: url => false
+    // Where DevTools open (a DevToolsPanel, or anything with show(view),
+    // close(view), toggle(view), isOpen(view) and inspect(x, y, view));
+    // without one, showDevTools() and inspectElement() do nothing.
+    property var devTools: null
 
     readonly property CefWebView currentView: tabs ? tabs.currentView : null
     readonly property int count: tabs ? tabs.count : 0
@@ -210,6 +214,41 @@ QtObject {
         return _pageCall(v, "focusInput", [opts || {}])
     }
 
+    // ---- DevTools ----------------------------------------------------------
+
+    // Opens the DevTools of `tab` (see `devTools`) and returns the frontend
+    // view, or null.
+    function showDevTools(tab) {
+        const v = viewAt(tab)
+        return v && devTools ? devTools.show(v) : null
+    }
+    // Closes the DevTools of `tab` (or, for a DevTools tab, the DevTools it
+    // shows); false if none were open.
+    function closeDevTools(tab) {
+        const v = viewAt(tab)
+        if (!v) return false
+        if (devTools) return devTools.close(v)
+        const target = v.devToolsFor || v
+        if (!target.hasDevTools) return false
+        target.closeDevTools()
+        return true
+    }
+    // Opens or closes the DevTools of `tab`; returns whether they are open.
+    function toggleDevTools(tab) {
+        const v = viewAt(tab)
+        return !!v && !!devTools && devTools.toggle(v)
+    }
+    function hasDevTools(tab) {
+        const v = viewAt(tab)
+        return !!v && (v.hasDevTools || v.devToolsFor !== null)
+    }
+    // Opens the DevTools of `tab` and reveals the element at (x, y) (view
+    // coordinates) in the Elements panel.
+    function inspectElement(x, y, tab) {
+        const v = viewAt(tab)
+        return !!v && !!devTools && devTools.inspect(x, y, v)
+    }
+
     // ---- tabs --------------------------------------------------------------
 
     // The view of `tab` (index, negative from the end, or view; undefined:
@@ -311,7 +350,9 @@ QtObject {
         target: ctl.tabs
         function onTabClosed(view, index) {
             const u = view.url.toString()
-            if (u === "" || u === "about:blank" || ctl.isInternalUrl(u)) return
+            // DevTools tabs cannot be reopened: what they inspected is gone.
+            if (u === "" || u === "about:blank" || view.devToolsFor !== null
+                    || u.startsWith("devtools:") || ctl.isInternalUrl(u)) return
             const entry = { url: u, title: view.title, icon: view.icon.toString(),
                             index: index, time: Date.now() }
             if (view.zoomFactor !== 1) entry.zoom = view.zoomFactor

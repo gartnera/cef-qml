@@ -24,7 +24,9 @@ import CefQml
 // hints.* actions but hints.focusInput a `linkHints` (a LinkHints).
 // site.info needs a `siteInfo` (a SiteInfo, e.g. NavigationBar.siteInfo)
 // and site.settings a `siteSettingsManager` (toggle(), visible); neither
-// has a default key. The
+// has a default key. devtools.toggle and devtools.inspect need `devTools`
+// (a DevToolsPanel: show(view), close(view), toggle(view), isOpen(view),
+// inspect(x, y, view)). The
 // page.scroll* actions have no default keys (window-wide letters or arrows
 // would take them from pages; see the README's modal example). Declare more
 // BrowserActions inside, or replace one
@@ -49,6 +51,7 @@ ActionRegistry {
     property var linkHints: null
     property var siteInfo: null
     property var siteSettingsManager: null
+    property var devTools: null
 
     readonly property CefWebView view: controller ? controller.currentView : null
     readonly property bool hasView: view !== null
@@ -394,6 +397,24 @@ ActionRegistry {
         checked: acts.siteSettingsManager !== null && acts.siteSettingsManager.visible
         enabled: acts.siteSettingsManager !== null
         onTriggered: acts.siteSettingsManager.toggle()
+    }
+
+    // devtools.*
+    BrowserAction {
+        name: "devtools.toggle"; text: "Developer tools"
+        description: "Show or hide the DevTools of the current tab (args: { view }); in a DevTools tab, close it."
+        defaultShortcuts: ["F12", "Ctrl+Shift+I"]
+        checked: acts.hasView && (acts.view.hasDevTools || acts.view.devToolsFor !== null)
+        enabled: acts.hasView && acts.devTools !== null
+        onTriggered: args => acts.devTools.toggle(args.view || acts.view)
+    }
+    BrowserAction {
+        name: "devtools.inspect"; text: "Inspect element"
+        description: "Open DevTools and reveal the element at args.x, args.y (view coordinates) of args.view (default: the current tab) in the Elements panel."
+        enabled: acts.hasView && acts.devTools !== null
+        // Needs a point: the context menu's "Inspect" passes the click.
+        showInPalette: false
+        onTriggered: args => acts.devTools.inspect(args.x || 0, args.y || 0, args.view || acts.view)
     }
 
     // palette.*

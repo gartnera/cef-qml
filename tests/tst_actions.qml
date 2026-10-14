@@ -281,15 +281,15 @@ Item {
 
         function test_09_same_level_conflict_last_bound_wins() {
             root.log = []
-            ignoreWarning(/KeyBindings: "F12" is bound to x.one and x.two; using x.two/)
-            regKeys.bind("x.one", ["F12"])
-            regKeys.bind("x.two", ["F12"])
-            keyClick(Qt.Key_F12)
+            ignoreWarning(/KeyBindings: "F10" is bound to x.one and x.two; using x.two/)
+            regKeys.bind("x.one", ["F10"])
+            regKeys.bind("x.two", ["F10"])
+            keyClick(Qt.Key_F10)
             tryVerify(() => root.log.length === 1, 2000)
             compare(root.log, ["two"])
-            ignoreWarning(/KeyBindings: "F12" is bound to x.two and x.one; using x.one/)
-            regKeys.bind("x.one", ["F12"])   // binding again makes it the latest
-            keyClick(Qt.Key_F12)
+            ignoreWarning(/KeyBindings: "F10" is bound to x.two and x.one; using x.one/)
+            regKeys.bind("x.one", ["F10"])   // binding again makes it the latest
+            keyClick(Qt.Key_F10)
             tryVerify(() => root.log.length === 2, 2000)
             compare(root.log[1], "one")
             regKeys.reset()

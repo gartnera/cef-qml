@@ -54,12 +54,17 @@ QtObject {
     readonly property string filePath: _file.filePath
 
     // The current state, as it is saved.
+    // DevTools tabs are left out: what they inspect is gone after a restart.
     function snapshot() {
-        const views = tabs ? tabs.views.filter(v => !!v) : []
+        const views = tabs ? tabs.views.filter(v => !!v && v.devToolsFor === null) : []
+        let current = tabs ? tabs.currentView : null
+        if (current && current.devToolsFor !== null) current = current.devToolsFor
+        let index = current ? views.indexOf(current) : -1
+        if (index < 0) index = tabs ? Math.min(tabs.currentIndex, views.length - 1) : 0
         return {
             version: 1,
             tabs: views.map(_tabEntry),
-            current: tabs ? Math.max(0, Math.min(tabs.currentIndex, views.length - 1)) : 0,
+            current: Math.max(0, index),
             closed: controller ? controller.closedTabs.map(_closedEntry) : [],
             savedAt: Date.now()
         }

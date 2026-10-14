@@ -987,6 +987,10 @@ void CefWebView::loadInBrowser(const QUrl& url) {
 void CefWebView::setUrl(const QUrl& url) {
   if (url == m_url)
     return;
+  // A frontend view shows DevTools only (see cefAllowNavigation); its url
+  // follows devToolsFor.
+  if (m_devToolsFor && url.scheme() != QLatin1String("devtools"))
+    return;
   m_url = url;
   Q_EMIT urlChanged();
   if (m_client && !m_ready) {
