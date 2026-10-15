@@ -5,6 +5,10 @@
 //! libservo_qml: the C API in `include/servo_qml.h` over Servo's Rust
 //! embedding API. Servo objects are `Rc`s that live on the thread that
 //! called `servo_qml_init`; the C side calls everything from that thread.
+//! The safety contract of the exported functions (valid pointers, NUL-
+//! terminated UTF-8 strings, that thread) is the one documented in the
+//! header.
+#![allow(clippy::missing_safety_doc)]
 
 use std::cell::{Cell, RefCell};
 use std::ffi::{CStr, CString, c_char, c_void};
