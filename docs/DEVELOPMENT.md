@@ -60,9 +60,28 @@ Notes for contributors (human or agent). Read this before changing anything.
   `subprojects/packagefiles/cef/meson.build` builds `libcef_dll_wrapper`.
   When editing that overlay, also copy it to the extracted
   `subprojects/cef_binary_*/meson.build` (or wipe the extracted dir).
-- `scripts/` — `make-release.sh` / `verify-release.sh` (prebuilt tarball).
+- `scripts/` — `make-release.sh` / `verify-release.sh` (prebuilt tarball),
+  `cargo-build.sh` (builds `libservo_qml.so` for meson).
+- Servo (`-Dservo=enabled`, off by default; see "Servo (experimental)" in
+  the README):
+  - `servo/` — Rust crate `servo-qml`: the C API (`include/servo_qml.h`,
+    `src/lib.rs`) over the `servo` crate, built as `libservo_qml.so`.
+    `Cargo.lock` started from the one published with `servo`; keep the
+    `servo` version pinned (`=0.7.0`) and update both together. Its QML
+    suite is `servo/tests/` (outside `tests/`, which `qmltestrunner` scans
+    recursively and which must not need the Servo module).
+  - `src/servo/` — `ServoWebView` (QQuickItem) and `ServoEngine` (starts,
+    spins and shuts down the process-wide Servo); `servoplugin.*`.
+  - `ServoQml/` — the module's `qmldir` and `meson.build`.
+  - `examples/servo/main.qml` — minimal Servo browser, optionally next to a
+    `CefWebView`.
+  - Gotchas: Servo objects are `Rc`s bound to the GUI thread; every call
+    into Servo runs inside `QtGlGuard` (Servo makes its EGL context current
+    there). A load sent before Servo reported a view's first URL is dropped
+    by Servo, so `ServoWebView` holds it until then.
 - `.github/` — CI and release workflows; `apt-packages.txt` is the Ubuntu
-  24.04 dependency list both use.
+  24.04 dependency list both use (`apt-packages-servo.txt` adds what the
+  `servo` CI job needs to build Servo).
 
 ## Build and test
 
