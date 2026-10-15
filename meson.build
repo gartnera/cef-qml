@@ -50,6 +50,9 @@ endif
 
 subdir('runtime')
 subdir('CefQml')
+if get_option('servo').enabled()
+  subdir('ServoQml')
+endif
 
 if get_option('examples')
   install_subdir('examples', install_dir: get_option('datadir') / 'cef-qml')
