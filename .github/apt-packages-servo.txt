@@ -1,0 +1,8 @@
+# Extra Ubuntu 24.04 packages for -Dservo=enabled (building libservo_qml.so
+# with cargo), on top of apt-packages.txt. Installed by the "servo" CI job.
+clang
+cmake
+libfontconfig-dev
+libfreetype-dev
+zlib1g-dev
+libegl-dev

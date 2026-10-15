@@ -62,3 +62,63 @@ jobs:
           name: meson-logs
           path: build/meson-logs/
           if-no-files-found: ignore
+
+  # ServoQml (-Dservo=enabled): builds libservo_qml.so with cargo and runs
+  # the ServoWebView suites. The first build compiles Servo (~15 min); the
+  # cargo cache makes later ones a few minutes.
+  servo:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          cat .github/apt-packages.txt .github/apt-packages-servo.txt |
+            grep -v -e '^#' -e '^$' |
+            xargs sudo apt-get install -y --no-install-recommends
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      - name: Restore CEF download
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: subprojects/packagecache
+          key: cef-${{ runner.os }}-${{ hashFiles('subprojects/cef.wrap') }}
+
+      - name: Restore cargo cache
+        id: cargo-cache
+        uses: actions/cache/restore@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            build/servo-target
+          key: servo-${{ runner.os }}-${{ hashFiles('servo/Cargo.lock') }}-${{ hashFiles('servo/src/**', 'servo/build.rs') }}
+          restore-keys: servo-${{ runner.os }}-${{ hashFiles('servo/Cargo.lock') }}-
+
+      - name: Configure
+        run: meson setup build -Dservo=enabled
+
+      - name: Build
+        run: meson compile -C build
+
+      - name: Save cargo cache
+        if: steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            build/servo-target
+          key: servo-${{ runner.os }}-${{ hashFiles('servo/Cargo.lock') }}-${{ hashFiles('servo/src/**', 'servo/build.rs') }}
+
+      - name: Test
+        run: meson test -C build --print-errorlogs servo-offscreen servo-wayland
+
+      - name: Upload test logs
+        if: failure()
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: meson-logs-servo
+          path: build/meson-logs/
+          if-no-files-found: ignore
