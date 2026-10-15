@@ -2,3 +2,4 @@
 /subprojects/*
 !/subprojects/*.wrap
 !/subprojects/packagefiles/
+/servo/target/

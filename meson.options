@@ -4,3 +4,7 @@ option('runtime_dir', type: 'string', value: '',
   description: 'Install directory for libcef.so, its resources and the helper (default: <libdir>/cef-qml)')
 option('examples', type: 'boolean', value: true,
   description: 'Install the example browser QML files')
+option('servo', type: 'feature', value: 'disabled',
+  description: 'Build the ServoQml module (ServoWebView, a Servo-backed web view); needs cargo unless servo_lib is set')
+option('servo_lib', type: 'string', value: '',
+  description: 'Prebuilt libservo_qml.so to use instead of building servo/ with cargo')

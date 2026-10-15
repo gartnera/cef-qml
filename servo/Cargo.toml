@@ -1,0 +1,26 @@
+[package]
+name = "servo-qml"
+version = "0.1.0"
+edition = "2024"
+license = "MPL-2.0"
+publish = false
+description = "C API over Servo's embedding API, used by the ServoQml QML module"
+
+[lib]
+name = "servo_qml"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+# Single process (no "multiprocess": content processes would have to be
+# spawned from the host binary), resources baked into the library.
+servo = { version = "=0.7.0", default-features = false, features = ["bundled", "clipboard", "js_jit"] }
+# Versions as locked by servo 0.7.0.
+dpi = "0.1"
+euclid = "0.22"
+serde_json = "1"
+url = "2"
+
+[profile.release]
+debug = false
+strip = "debuginfo"

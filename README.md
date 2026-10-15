@@ -33,7 +33,7 @@ page, and a `confirm()` dialog drawn by `RequestOverlay`.*
 Contents: [Install](#install) · [Quickstart](#quickstart) ·
 [`CefQml` API](#cefqml-module-api) · [`CefQml.Components`](#cefqmlcomponents) ·
 [Sessions](#sessions) · [DevTools](#devtools) · [Hot reload](#hot-reload) · [Remote control (CDP)](#remote-control-chrome-devtools-protocol) ·
-[Environment variables](#environment-variables) · [Limitations](#limitations) ·
+[Servo (experimental)](#servo-experimental) · [Environment variables](#environment-variables) · [Limitations](#limitations) ·
 [Testing](#testing) · [License](#license)
 
 ## Install
@@ -1759,6 +1759,76 @@ development or automation. Inside QML, `CefWebView.devToolsMethod()` gives the
 same protocol without a port, and [DevTools](#devtools) show the inspector
 without one.
 
+## Servo (experimental)
+
+`ServoQml` is an optional second engine: `ServoWebView`, a web view backed by
+[Servo](https://servo.org) (the `servo` crate, 0.7.0), rendered off-screen into
+the scene the same way `CefWebView` is. It is a demo of how a non-Chromium
+engine fits next to CEF, not a replacement for it: none of `CefQml.Components`
+use it yet.
+
+| | |
+|---|---|
+| ![Servo](docs/screenshots/7-servo.png) | ![Servo next to Chromium](docs/screenshots/8-servo-compare.png) |
+
+*`examples/servo/`: servo.org in Servo, and Wikipedia in Servo (left) next to
+Chromium (right). Servo draws the CSS `mask-image` icons as black squares.*
+
+Servo is Rust and only ships as a crate (its releases contain `servoshell`,
+not a library), so `servo/` wraps it in a C API
+([`servo/include/servo_qml.h`](servo/include/servo_qml.h)) built as
+`libservo_qml.so`. Enable it with:
+
+```sh
+meson setup build -Dservo=enabled       # needs cargo (Rust >= 1.88)
+meson compile -C build                  # first build compiles Servo: ~10-15 min
+QML_IMPORT_PATH=build /usr/lib/qt6/bin/qml examples/servo/main.qml -- https://servo.org
+```
+
+The first build downloads Servo's crates and a prebuilt SpiderMonkey and
+compiles the rest (about 2.6 GB in `build/servo-target`); later builds only
+relink. `-Dservo_lib=/path/to/libservo_qml.so` uses an already built library
+instead of cargo. `libservo_qml.so` installs next to `libcef.so`, the module
+into `<qml_dir>/ServoQml`.
+
+```qml
+import ServoQml
+
+ServoWebView {
+    anchors.fill: parent
+    url: "https://servo.org"
+    focus: true
+    onNewWindowRequested: (url) => this.url = url    // target=_blank, window.open
+}
+```
+
+`ServoWebView` uses `CefWebView`'s names for what both have:
+
+| Member | |
+|---|---|
+| `url`, `title`, `loading`, `loadProgress`, `canGoBack`, `canGoForward`, `hoveredUrl`, `zoomFactor`, `ready`, `frameCount` | As on `CefWebView`. `loadProgress` is 0.1 / 0.5 / 1 (started, `<head>` parsed, complete). |
+| `engine` | `"servo"`. |
+| `goBack()`, `goForward()`, `reload()`, `loadHtml(html)` | |
+| `runJavaScript(script)`, `evaluateJavaScript(script, callback)` | `callback(result, error)`; results are JSON-like values, DOM nodes become strings such as `"[object Element]"`. Promises are not awaited. |
+| `sendMouseClick()`, `sendMouseMove()`, `sendMouseWheel()`, `sendKey()` | Same signatures as on `CefWebView`. |
+| `loadFinished(url)`, `consoleMessage(level, message)`, `crashed(reason)` | Signals. |
+| `newWindowRequested(url)` | The page asked for a new window; Servo was told no. |
+
+How it works: one Servo instance per process runs on the GUI thread, started
+by the first view and shut down when the application quits. Servo wakes Qt
+from its own threads and the GUI thread spins Servo's event loop. Each view
+renders into its own software (Mesa llvmpipe) GL context; frames are read
+back and uploaded as a texture, like CEF's. Servo's GL context is made
+current on the GUI thread, so Qt's context is released around every call
+into Servo.
+
+Not there yet (Servo's embedding API has most of these, the wrapper does
+not expose them): JavaScript dialogs, `<select>` popups, context menus,
+permission and file-chooser requests, downloads, find in page, favicons,
+DevTools, IME composition, touch, a `stop()`. Hardware-accelerated rendering
+(sharing a GL context with Qt) would remove the CPU copy. Servo itself has
+[web compatibility gaps](https://servo.org/wpt/).
+
 ## Environment variables
 
 | Variable | Effect |
@@ -1772,6 +1842,9 @@ without one.
 | `CEF_QML_LOG_FILE` | Write CEF's log there. |
 | `CEF_QML_VERBOSE` | Log at INFO level instead of ERROR. |
 | `CEF_QML_ALLOW_MALLOC_REPLACEMENT` | Start even though the process replaced `malloc` (see below; expect crashes). |
+| `SERVO_QML_PROFILE_DIR` | `ServoWebView` profile directory (cookies, local storage, cache). Default: none, storage is temporary. |
+| `SERVO_QML_CERTIFICATE_PATH` | PEM file of CA certificates for Servo to trust. |
+| `RUST_LOG` | Servo's log filter, e.g. `warn` (default: errors only). Servo also uses `http_proxy`, `https_proxy` and `no_proxy`. |
 
 Qt logging: the plugin logs under the category `cefqml`
 (`QT_LOGGING_RULES="cefqml.info=true"`).
@@ -1816,6 +1889,7 @@ Qt logging: the plugin logs under the category `cefqml`
 meson test -C build --print-errorlogs      # offscreen + wayland + cdp-remote suites
 tests/run.sh build offscreen               # all qmltestrunner suites, offscreen only
 TEST_INPUT=tests/tst_browser.qml tests/run.sh build offscreen
+meson test -C build servo-offscreen servo-wayland   # with -Dservo=enabled
 ```
 
 The suites need `qmltestrunner` (`qt6-declarative-dev-tools`), `weston` for

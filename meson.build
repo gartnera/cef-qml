@@ -50,6 +50,9 @@ endif
 
 subdir('runtime')
 subdir('CefQml')
+if get_option('servo').enabled()
+  subdir('ServoQml')
+endif
 
 if get_option('examples')
   install_subdir('examples', install_dir: get_option('datadir') / 'cef-qml')
@@ -78,4 +81,15 @@ if python3.found()
            meson.current_source_dir() / 'examples' / 'browser' / 'main.qml'],
     depends: [plugin, qmldir_file, helper, stage_runtime],
     timeout: 120, is_parallel: false)
+endif
+
+# ServoWebView suite (servo/tests), on both platforms.
+if get_option('servo').enabled()
+  foreach mode : ['offscreen', 'wayland']
+    test('servo-' + mode, run_tests,
+      args: [meson.project_build_root(), mode],
+      env: ['TEST_INPUT=' + meson.current_source_dir() / 'servo' / 'tests'],
+      depends: [servo_plugin, servo_qmldir, servo_lib],
+      timeout: 300, is_parallel: false)
+  endforeach
 endif
